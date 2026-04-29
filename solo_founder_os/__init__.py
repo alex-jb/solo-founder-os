@@ -20,7 +20,7 @@ where one fix benefits all current AND future agents.
 Versioning policy: SemVer, but breaking changes only on major bumps.
 Internal modules (those starting with `_`) can break in minor versions.
 """
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .source import (
     Source,
@@ -44,6 +44,15 @@ from .anthropic_client import (
     DEFAULT_HAIKU_MODEL,
     DEFAULT_SONNET_MODEL,
 )
+from .hitl_queue import (
+    HitlQueue,
+    parse_frontmatter,
+    render_frontmatter,
+    sanitize_filename_part,
+    make_basename,
+    PENDING, APPROVED, REJECTED, SENT,
+)
+from .cli import add_common_args, check_skip, resolve_notify_targets
 
 __all__ = [
     "Source", "SourceReport", "MetricSample", "SEVERITY_ORDER",
@@ -51,4 +60,8 @@ __all__ = [
     "enrich_with_baseline", "record_samples", "BASELINE_WINDOW_DAYS",
     "log_usage", "usage_report", "PRICES",
     "AnthropicClient", "DEFAULT_HAIKU_MODEL", "DEFAULT_SONNET_MODEL",
+    "HitlQueue", "parse_frontmatter", "render_frontmatter",
+    "sanitize_filename_part", "make_basename",
+    "PENDING", "APPROVED", "REJECTED", "SENT",
+    "add_common_args", "check_skip", "resolve_notify_targets",
 ]
