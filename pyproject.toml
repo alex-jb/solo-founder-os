@@ -8,11 +8,27 @@ readme = "README.md"
 requires-python = ">=3.9"
 dependencies = []
 
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+keywords = ["agent", "library", "anthropic", "claude", "indie", "solo-founder"]
+
 [project.optional-dependencies]
 anthropic = ["anthropic>=0.40"]
 dev = ["pytest>=8.0", "anthropic>=0.40"]
 
 [project.urls]
+Repository = "https://github.com/alex-jb/solo-founder-os"
+Issues = "https://github.com/alex-jb/solo-founder-os/issues"
 Homepage = "https://github.com/alex-jb/solo-founder-os"
 
 [build-system]

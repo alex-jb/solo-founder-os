@@ -5,6 +5,7 @@
 > Solo Founder OS agent stack 的共享基础库。所有 alex-jb agent 都依赖它。Source/MetricSample/SourceReport ABC、7 天 baseline + 自动归档、HTTP 重试、Anthropic 客户端 + 自动 cost log、推送(ntfy / Telegram / Slack)、brief 渲染、测试工具。
 
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/solo-founder-os.svg)](https://pypi.org/project/solo-founder-os/)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](#)
 
 ## 为什么存在

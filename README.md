@@ -5,6 +5,7 @@
 > Shared base library for the Solo Founder OS agent stack. The thing every alex-jb agent depends on. Source/MetricSample/SourceReport ABCs, 7-day baseline with rotation, HTTP retry, Anthropic client with auto cost log, notifiers (ntfy / Telegram / Slack), brief composer, testing helpers.
 
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/solo-founder-os.svg)](https://pypi.org/project/solo-founder-os/)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](#)
 
 ## Why this exists
