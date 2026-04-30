@@ -205,6 +205,93 @@ class AnthropicClient:
 
         return resp, None
 
+    def messages_create_json(
+        self,
+        *,
+        schema: dict,
+        model: str,
+        max_tokens: int = 1024,
+        system: Any = None,
+        messages: list | None = None,
+        **extra,
+    ) -> tuple[Optional[dict], Optional[str]]:
+        """Structured-output convenience wrapper.
+
+        Calls the Anthropic API with the public-beta structured-outputs
+        feature (header: anthropic-beta=structured-outputs-2025-11-13).
+        The model is forced to emit JSON conforming to `schema`.
+
+        Returns (parsed_dict, error_str):
+            success → (parsed_dict, None)
+            failure → (None, "<reason>")
+
+        Failure paths covered by the same graceful-degrade contract as
+        messages_create:
+            - missing API key
+            - network / rate-limit / SDK error
+            - JSON parse failure (shouldn't happen with structured outputs
+              but we belt-and-brace because the feature is beta)
+            - unexpected response shape
+
+        Caller code that previously did:
+            resp, err = client.messages_create(...)
+            text = AnthropicClient.extract_text(resp)
+            try:
+                data = json.loads(text)
+            except Exception:
+                # template fallback
+                ...
+
+        becomes:
+            data, err = client.messages_create_json(schema=..., ...)
+            if err:
+                # template fallback
+                ...
+
+        `schema` is a JSON Schema dict. Examples:
+            {"type": "object",
+             "properties": {"name": {"type": "string"}},
+             "required": ["name"]}
+
+        `extra` is forwarded to messages_create — use for `extra_headers`,
+        `cache_system`, `cache_ttl`, etc.
+        """
+        # Beta header for structured outputs (Anthropic public beta as of
+        # 2025-11-13). Agents that already pass extra_headers get merged.
+        extra_headers = dict(extra.pop("extra_headers", {}) or {})
+        extra_headers.setdefault(
+            "anthropic-beta", "structured-outputs-2025-11-13")
+
+        # The structured output param shape per Anthropic docs:
+        # output_config = {"format": {"type": "json_schema", "schema": {...}}}
+        output_config = {
+            "format": {"type": "json_schema", "schema": schema},
+        }
+
+        resp, err = self.messages_create(
+            model=model,
+            max_tokens=max_tokens,
+            system=system,
+            messages=messages or [],
+            extra_headers=extra_headers,
+            output_config=output_config,
+            **extra,
+        )
+        if err is not None:
+            return None, err
+
+        # Even with structured outputs, the response is in the standard
+        # text-content shape — just guaranteed parseable.
+        import json
+        text = self.extract_text(resp)
+        if not text:
+            return None, "empty response from API"
+        try:
+            return json.loads(text), None
+        except json.JSONDecodeError as e:
+            # Beta feature occasionally hiccups; fall back gracefully.
+            return None, f"structured output parse failed: {e}"
+
     @staticmethod
     def extract_text(resp: Any) -> str:
         """Concatenate text blocks from a response. Returns "" if resp is

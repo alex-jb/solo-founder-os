@@ -20,7 +20,7 @@ where one fix benefits all current AND future agents.
 Versioning policy: SemVer, but breaking changes only on major bumps.
 Internal modules (those starting with `_`) can break in minor versions.
 """
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 from .source import (
     Source,
@@ -58,6 +58,13 @@ from .scheduler import (
     build_cron_line,
     launch_agent_path,
 )
+from .batch import (
+    batch_request,
+    batch_submit,
+    batch_status,
+    batch_results,
+    batch_wait,
+)
 
 __all__ = [
     "Source", "SourceReport", "MetricSample", "SEVERITY_ORDER",
@@ -70,4 +77,5 @@ __all__ = [
     "PENDING", "APPROVED", "REJECTED", "SENT",
     "add_common_args", "check_skip", "resolve_notify_targets",
     "build_launchd_plist", "build_cron_line", "launch_agent_path",
+    "batch_request", "batch_submit", "batch_status", "batch_results", "batch_wait",
 ]
