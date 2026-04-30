@@ -157,3 +157,132 @@ def test_extract_text_concats_blocks():
     skip = MagicMock(); skip.text = "img"; skip.type = "image"  # filtered
     resp = MagicMock(); resp.content = [a, b, skip]
     assert AnthropicClient.extract_text(resp) == "hello world"
+
+
+# ─── prompt caching (v0.4) ────────────────────────────
+
+from solo_founder_os.anthropic_client import _wrap_system_with_cache
+
+
+def test_wrap_system_string_to_cached_blocks():
+    out = _wrap_system_with_cache("Hello world prompt")
+    assert isinstance(out, list)
+    assert out == [{
+        "type": "text",
+        "text": "Hello world prompt",
+        "cache_control": {"type": "ephemeral"},
+    }]
+
+
+def test_wrap_system_string_with_1h_ttl():
+    out = _wrap_system_with_cache("system prompt", ttl="1h")
+    assert out[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+
+def test_wrap_system_existing_list_gets_cache_on_last_block():
+    inp = [
+        {"type": "text", "text": "stable instructions"},
+        {"type": "text", "text": "more stable content"},
+    ]
+    out = _wrap_system_with_cache(inp)
+    assert "cache_control" not in out[0]  # first block clean
+    assert out[1]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_wrap_system_does_not_mutate_input():
+    inp = [{"type": "text", "text": "prompt"}]
+    out = _wrap_system_with_cache(inp)
+    assert "cache_control" not in inp[0]
+    assert "cache_control" in out[0]
+
+
+def test_wrap_system_empty_passthrough():
+    assert _wrap_system_with_cache("") == ""
+    assert _wrap_system_with_cache(None) is None
+
+
+def test_wrap_system_unknown_shape_passthrough():
+    assert _wrap_system_with_cache(42) == 42
+
+
+def test_client_caches_system_by_default(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    captured: dict = {}
+
+    def capture(**kwargs):
+        captured.update(kwargs)
+        block = MagicMock(); block.text = "ok"; block.type = "text"
+        resp = MagicMock(); resp.content = [block]
+        resp.usage.input_tokens = 100
+        resp.usage.output_tokens = 20
+        resp.usage.cache_read_input_tokens = 0
+        resp.usage.cache_creation_input_tokens = 100
+        return resp
+
+    fake = MagicMock()
+    fake.messages.create.side_effect = capture
+    with patch("anthropic.Anthropic", return_value=fake):
+        c = AnthropicClient()
+        c.messages_create(model="x", max_tokens=1, system="my prompt", messages=[])
+    assert isinstance(captured["system"], list)
+    assert captured["system"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_client_skips_caching_when_disabled(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    captured: dict = {}
+
+    def capture(**kwargs):
+        captured.update(kwargs)
+        block = MagicMock(); block.text = "ok"; block.type = "text"
+        resp = MagicMock(); resp.content = [block]
+        return resp
+
+    fake = MagicMock()
+    fake.messages.create.side_effect = capture
+    with patch("anthropic.Anthropic", return_value=fake):
+        c = AnthropicClient(cache_system=False)
+        c.messages_create(model="x", max_tokens=1, system="my prompt", messages=[])
+    assert captured["system"] == "my prompt"
+
+
+def test_client_per_call_cache_override(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    captured: dict = {}
+
+    def capture(**kwargs):
+        captured.update(kwargs)
+        block = MagicMock(); block.text = "ok"; block.type = "text"
+        resp = MagicMock(); resp.content = [block]
+        return resp
+
+    fake = MagicMock()
+    fake.messages.create.side_effect = capture
+    with patch("anthropic.Anthropic", return_value=fake):
+        c = AnthropicClient(cache_system=True)
+        c.messages_create(model="x", max_tokens=1, system="my prompt", messages=[],
+                           cache_system=False)
+    assert captured["system"] == "my prompt"
+    assert "cache_system" not in captured  # not forwarded to API
+
+
+def test_client_logs_cache_token_fields(monkeypatch, tmp_path):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    log = tmp_path / "u.jsonl"
+    fake = MagicMock()
+    block = MagicMock(); block.text = "ok"; block.type = "text"
+    resp = MagicMock()
+    resp.content = [block]
+    resp.usage.input_tokens = 50
+    resp.usage.output_tokens = 20
+    resp.usage.cache_read_input_tokens = 800
+    resp.usage.cache_creation_input_tokens = 0
+    fake.messages.create.return_value = resp
+    with patch("anthropic.Anthropic", return_value=fake):
+        c = AnthropicClient(usage_log_path=log)
+        c.messages_create(model="claude-haiku-4-5", max_tokens=1,
+                          system="cached system prompt", messages=[])
+    import json as _json
+    row = _json.loads(log.read_text().strip())
+    assert row["cache_read_input_tokens"] == 800
+    assert row["cache_creation_input_tokens"] == 0
