@@ -20,7 +20,7 @@ where one fix benefits all current AND future agents.
 Versioning policy: SemVer, but breaking changes only on major bumps.
 Internal modules (those starting with `_`) can break in minor versions.
 """
-__version__ = "0.16.0"
+__version__ = "0.17.0"
 
 from .source import (
     Source,
@@ -116,6 +116,11 @@ from .eval import (
     SkillEvalReport,
     ExampleScore,
 )
+from .cross_agent_report import (
+    collect as collect_cross_agent_report,
+    render_markdown as render_cross_agent_markdown,
+    KNOWN_AGENT_DIRS,
+)
 
 __all__ = [
     "Source", "SourceReport", "MetricSample", "SEVERITY_ORDER",
@@ -143,4 +148,6 @@ __all__ = [
     "evaluate_skill", "write_eval_report", "load_recent_reports",
     "detect_drift", "list_skills_with_examples",
     "SkillEvalReport", "ExampleScore",
+    "collect_cross_agent_report", "render_cross_agent_markdown",
+    "KNOWN_AGENT_DIRS",
 ]
