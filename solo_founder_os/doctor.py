@@ -272,12 +272,41 @@ def render_json(reports: list[AgentReport],
     return json.dumps(out, indent=2), all_ok
 
 
+def _summary_for_push(reports: list[AgentReport],
+                       stack_wide: list[CheckResult],
+                       all_ok: bool) -> tuple[str, str, str]:
+    """Build a (title, body, priority) tuple suited for ntfy/Telegram/Slack
+    push. Push body should be short — phones truncate. We surface only
+    failed agents + the stack-wide notifier line."""
+    if all_ok:
+        return (
+            "🟢 sfos-doctor: all green",
+            ("All 8 agents wired correctly. "
+             "Notifier configured. Ready to ship."),
+            "default",
+        )
+    failed = [r.name for r in reports if not r.passed_required]
+    stack_failures = [c.label for c in stack_wide
+                       if not c.ok and c.severity != "warn"]
+    lines = ["sfos-doctor failed:"]
+    if stack_failures:
+        lines.append("Stack: " + ", ".join(stack_failures))
+    if failed:
+        lines.append("Agents: " + ", ".join(failed))
+    return ("🔴 sfos-doctor: fixes needed",
+            "\n".join(lines), "high")
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     p = argparse.ArgumentParser(
         prog="sfos-doctor",
         description="Audit the Solo Founder OS agent stack.")
     p.add_argument("--json", action="store_true",
                     help="Emit JSON instead of human-readable text.")
+    p.add_argument("--notify", default=None,
+                    help="Comma-separated notifiers (ntfy,telegram,slack). "
+                         "Sends a one-line summary to your phone after the "
+                         "audit runs. Empty/unset → no push.")
     args = p.parse_args(argv)
 
     reports = [check_agent(spec) for spec in AGENT_CHECKS]
@@ -285,6 +314,20 @@ def main(argv: Optional[list[str]] = None) -> int:
     text, all_ok = (render_json if args.json else render_text)(
         reports, stack_wide)
     print(text)
+
+    # Optional push (after the local print so cron logs still capture text)
+    if args.notify:
+        try:
+            from .notifier import fan_out
+        except ImportError:
+            pass
+        else:
+            targets = [n.strip() for n in args.notify.split(",") if n.strip()]
+            if targets:
+                title, body, priority = _summary_for_push(
+                    reports, stack_wide, all_ok)
+                fan_out(targets, body, title=title, priority=priority)
+
     return 0 if all_ok else 1
 
 

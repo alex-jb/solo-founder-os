@@ -139,3 +139,75 @@ def test_main_json_flag(monkeypatch, capsys):
     out = capsys.readouterr().out
     blob = json.loads(out)
     assert "agents" in blob
+
+
+def test_summary_for_push_all_green():
+    """When all_ok=True, summary should be reassuring + default priority."""
+    title, body, priority = doctor._summary_for_push([], [], all_ok=True)
+    assert "🟢" in title
+    assert priority == "default"
+    assert "ready" in body.lower() or "green" in body.lower()
+
+
+def test_summary_for_push_failures(monkeypatch):
+    """When agents fail, summary names them + uses high priority."""
+    _isolate_env(monkeypatch)
+    failed_agent = doctor.AgentReport(
+        name="build-quality-agent",
+        checks=[doctor.CheckResult("$ANTHROPIC_API_KEY", False, "unset",
+                                    severity="required")],
+    )
+    title, body, priority = doctor._summary_for_push(
+        [failed_agent], [], all_ok=False)
+    assert "🔴" in title
+    assert priority == "high"
+    assert "build-quality-agent" in body
+
+
+def test_main_notify_calls_fan_out(monkeypatch, capsys):
+    """--notify ntfy should hit notifier.fan_out with the summary."""
+    _isolate_env(monkeypatch)
+    monkeypatch.setenv("NTFY_TOPIC", "alex-test")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-x")
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda name: f"/fake/{name}")
+    import subprocess
+    def fake_run(*a, **kw):
+        class R:
+            stdout = "com.alex.funnel-analytics.brief"
+        return R()
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    captured = {}
+    def fake_fan_out(targets, body, *, title="", priority="default"):
+        captured["targets"] = targets
+        captured["body"] = body
+        captured["title"] = title
+        captured["priority"] = priority
+        return {t: True for t in targets}
+
+    from solo_founder_os import notifier
+    monkeypatch.setattr(notifier, "fan_out", fake_fan_out)
+
+    doctor.main(["--notify", "ntfy"])
+    capsys.readouterr()  # discard output
+    assert captured.get("targets") == ["ntfy"]
+    assert "🟢" in captured.get("title", "") or "🔴" in captured.get("title", "")
+
+
+def test_main_no_notify_skips_fan_out(monkeypatch, capsys):
+    """Without --notify, fan_out is never called."""
+    _isolate_env(monkeypatch)
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+
+    called = {"hit": False}
+    def fake_fan_out(*a, **kw):
+        called["hit"] = True
+        return {}
+
+    from solo_founder_os import notifier
+    monkeypatch.setattr(notifier, "fan_out", fake_fan_out)
+    doctor.main([])
+    capsys.readouterr()
+    assert called["hit"] is False
