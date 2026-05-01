@@ -20,7 +20,7 @@ where one fix benefits all current AND future agents.
 Versioning policy: SemVer, but breaking changes only on major bumps.
 Internal modules (those starting with `_`) can break in minor versions.
 """
-__version__ = "0.14.0"
+__version__ = "0.15.0"
 
 from .source import (
     Source,
