@@ -18,6 +18,7 @@ from solo_founder_os.evolver import (
     FailurePattern,
     Proposal,
     _bucket_signal,
+    find_drift_patterns,
     find_recurring_patterns,
     is_safe_path,
     main,
@@ -371,3 +372,146 @@ def test_default_agent_repos_registry():
     slugs = [a for a, _ in DEFAULT_AGENT_REPOS]
     assert ".vc-outreach-agent" in slugs
     assert ".funnel-analytics-agent" in slugs
+
+
+# ── L4↔L6 wire-up: find_drift_patterns ─────────────────────────
+
+
+def _plant_eval_pair(home: pathlib.Path, skill: str,
+                       prev_mean: float, curr_mean: float) -> None:
+    """Plant 2 eval reports for the skill; older first so detect_drift
+    picks them up in chronological order."""
+    examples_dir = home / ".solo-founder-os" / "examples"
+    examples_dir.mkdir(parents=True, exist_ok=True)
+    (examples_dir / f"{skill}.jsonl").write_text(
+        json.dumps({"ts": "2026-05-01T00:00:00+00:00",
+                     "inputs": {}, "output": "x", "note": ""}) + "\n",
+        encoding="utf-8",
+    )
+    evals_dir = home / ".solo-founder-os" / "evals"
+    evals_dir.mkdir(parents=True, exist_ok=True)
+    older = {
+        "skill": skill,
+        "ts": "2026-05-01T00:00:00+00:00",
+        "n_examples": 5,
+        "scores": [],
+        "mean_overall": prev_mean,
+        "p50_overall": prev_mean,
+        "p10_overall": prev_mean,
+        "rubric": "",
+    }
+    newer = {
+        "skill": skill,
+        "ts": "2026-05-02T00:00:00+00:00",
+        "n_examples": 5,
+        "scores": [
+            {"example_index": 0, "clarity": 2, "specificity": 2,
+              "voice": 2, "accuracy": 2, "completeness": 2,
+              "overall": curr_mean,
+              "notes": "weak voice; generic phrasing"},
+        ],
+        "mean_overall": curr_mean,
+        "p50_overall": curr_mean,
+        "p10_overall": curr_mean,
+        "rubric": "",
+    }
+    # Filenames must sort chronologically — load_recent_reports uses
+    # sorted glob order and takes the last N.
+    (evals_dir / f"2026-05-01-0900-{skill}.json").write_text(
+        json.dumps(older), encoding="utf-8")
+    (evals_dir / f"2026-05-02-0900-{skill}.json").write_text(
+        json.dumps(newer), encoding="utf-8")
+
+
+def test_find_drift_patterns_detects_drop(monkeypatch, tmp_path):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    _plant_eval_pair(tmp_path, "draft-vc-email",
+                       prev_mean=4.5, curr_mean=3.2)  # delta -1.3 > 0.5
+    pats = find_drift_patterns(drift_threshold=0.5)
+    assert len(pats) == 1
+    p = pats[0]
+    assert p.task == "draft-vc-email"
+    assert p.agent == ".solo-founder-os"
+    assert "quality-drift" in p.signal_bucket
+    assert p.count >= 3
+    # Sample signals should include the rubric notes from the worst row
+    assert any("weak voice" in s for s in p.sample_signals)
+
+
+def test_find_drift_patterns_ignores_small_drop(monkeypatch, tmp_path):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    _plant_eval_pair(tmp_path, "draft-vc-email",
+                       prev_mean=4.0, curr_mean=3.7)  # delta -0.3 < 0.5
+    pats = find_drift_patterns(drift_threshold=0.5)
+    assert pats == []
+
+
+def test_find_drift_patterns_no_evals_returns_empty(monkeypatch, tmp_path):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    pats = find_drift_patterns(drift_threshold=0.5)
+    assert pats == []
+
+
+def test_find_drift_patterns_count_scales_with_magnitude(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    _plant_eval_pair(tmp_path, "draft-a", prev_mean=4.5, curr_mean=4.0)
+    _plant_eval_pair(tmp_path, "draft-b", prev_mean=4.5, curr_mean=2.0)
+    pats = find_drift_patterns(drift_threshold=0.4)
+    by_skill = {p.task: p for p in pats}
+    # bigger drop sorts first via -count
+    assert pats[0].task == "draft-b"
+    assert by_skill["draft-b"].count > by_skill["draft-a"].count
+
+
+def test_main_picks_up_drift_patterns(monkeypatch, tmp_path, capsys):
+    """End-to-end: only L6 drift signal (no reflexion rows) → main runs
+    → an artifact gets written tagged as quality-drift."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.delenv("EVOLVER_SKIP", raising=False)
+    _plant_eval_pair(tmp_path, "draft-vc-email",
+                       prev_mean=4.5, curr_mean=3.0)
+
+    import solo_founder_os.evolver as ev
+    class FakeClient:
+        configured = True
+        def messages_create_json(self, **kw):
+            return ({
+                "target_file": "vc_outreach_agent/drafter.py",
+                "rationale": "tighten voice spec",
+                "diff": "+ # drift fix\n",
+                "test_case": "",
+            }, None)
+    monkeypatch.setattr(ev, "AnthropicClient", lambda **kw: FakeClient())
+
+    rc = main([])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "L6 quality-drift signal" in err
+    artifacts = list((tmp_path / ".solo-founder-os" / "evolver-proposals")
+                      .glob("*.md"))
+    assert len(artifacts) == 1
+    md = artifacts[0].read_text()
+    assert "draft-vc-email" in md
+    assert "quality-drift" in md
+
+
+def test_main_drift_disabled_with_zero_threshold(
+    monkeypatch, tmp_path, capsys,
+):
+    """--drift-threshold 0 turns off the L6 path entirely (escape hatch)."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("EVOLVER_SKIP", raising=False)
+    _plant_eval_pair(tmp_path, "draft-vc-email",
+                       prev_mean=4.5, curr_mean=3.0)
+    rc = main(["--drift-threshold", "0"])
+    assert rc == 0
+    err = capsys.readouterr().err
+    # No drift line, no artifacts (no reflexion rows planted either)
+    assert "L6 quality-drift signal" not in err
+    artifacts = list((tmp_path / ".solo-founder-os" / "evolver-proposals")
+                      .glob("*.md")) if (tmp_path / ".solo-founder-os"
+                      / "evolver-proposals").exists() else []
+    assert artifacts == []

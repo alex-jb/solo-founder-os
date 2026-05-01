@@ -47,6 +47,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from .anthropic_client import AnthropicClient, DEFAULT_HAIKU_MODEL
+from .eval import detect_drift, list_skills_with_examples, load_recent_reports
 
 
 EVOLVER_USAGE_LOG = pathlib.Path.home() / ".solo-founder-os" / "usage.jsonl"
@@ -174,6 +175,61 @@ def find_recurring_patterns(
             signal_bucket=bucket,
             count=n,
             sample_signals=samples[(agent, task, bucket)][:5],
+        ))
+    out.sort(key=lambda p: -p.count)
+    return out
+
+
+def find_drift_patterns(
+    *,
+    evals_base: Optional[pathlib.Path] = None,
+    drift_threshold: float = 0.5,
+) -> list[FailurePattern]:
+    """L6 → L4 bridge. Read every skill's recent eval reports, flag any
+    whose mean score dropped > threshold across the last two runs, and
+    return them as FailurePattern entries the existing synthesize_proposal
+    loop can consume.
+
+    Why count = max(3, ceil(delta * 10)):
+      - Reuses the >=3 floor that find_recurring_patterns enforces, so
+        a single drift signal is enough to make it past the default
+        --min-count gate without inflating reflexion-bucket counts.
+      - Larger drops sort higher in the merged proposal queue.
+    """
+    skills = list_skills_with_examples()
+    out: list[FailurePattern] = []
+    for skill in skills:
+        drift = detect_drift(skill, base=evals_base, threshold=drift_threshold)
+        if not drift:
+            continue
+        # Pull worst-scoring rows from the latest report as failure
+        # samples — these are the rubric notes Sonnet wrote, which is
+        # exactly the kind of free-text "verbatim_signal" the proposal
+        # prompt expects.
+        reports = load_recent_reports(skill, base=evals_base, n=1)
+        sample_signals: list[str] = []
+        if reports:
+            scores = sorted(reports[-1].scores, key=lambda s: s.overall)[:3]
+            sample_signals = [
+                f"overall={s.overall} ({s.notes})".strip()
+                for s in scores if s.notes or s.overall
+            ]
+        delta_abs = abs(drift["delta"])
+        # Map drift magnitude into the same count axis the reflexion
+        # path uses so merged sort-by-count stays meaningful.
+        count = max(3, int(delta_abs * 10))
+        out.append(FailurePattern(
+            agent=".solo-founder-os",  # examples live in shared SFOS dir
+            task=skill,
+            signal_bucket=f"quality-drift mean {drift['previous_mean']:.2f} "
+                            f"→ {drift['current_mean']:.2f} "
+                            f"(delta {drift['delta']:+.2f})",
+            count=count,
+            sample_signals=sample_signals or [
+                f"mean dropped {delta_abs:.2f} between "
+                f"{drift['reports_compared'][0][:10]} and "
+                f"{drift['reports_compared'][1][:10]}",
+            ],
         ))
     out.sort(key=lambda p: -p.count)
     return out
@@ -394,15 +450,33 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--max-proposals", type=int, default=5,
                     help="Maximum proposals to generate per run "
                          "(default 5).")
+    p.add_argument("--drift-threshold", type=float, default=0.5,
+                    help="Eval mean-score drop that counts as drift "
+                         "(default 0.5; pass 0 to disable L6 input).")
     args = p.parse_args(argv)
 
     if os.getenv("EVOLVER_SKIP") == "1":
         return 0
 
     patterns = find_recurring_patterns(min_count=args.min_count)
+    drift_patterns: list[FailurePattern] = []
+    if args.drift_threshold > 0:
+        try:
+            drift_patterns = find_drift_patterns(
+                drift_threshold=args.drift_threshold,
+            )
+        except Exception as e:
+            # Drift is supplementary; never block the reflexion path.
+            print(f"  (drift scan skipped: {e})", file=sys.stderr)
+    if drift_patterns:
+        print(f"  + {len(drift_patterns)} L6 quality-drift signal(s)",
+              file=sys.stderr)
+        patterns = drift_patterns + patterns
     if not patterns:
         print("No recurring failure patterns found "
-              f"(threshold ≥{args.min_count}).", file=sys.stderr)
+              f"(reflexion threshold ≥{args.min_count}, "
+              f"drift threshold {args.drift_threshold}).",
+              file=sys.stderr)
         return 0
 
     print(f"Found {len(patterns)} recurring pattern(s):", file=sys.stderr)
