@@ -1,6 +1,6 @@
 [project]
 name = "solo-founder-os"
-version = "0.11.0"
+version = "0.12.0"
 description = "Shared base library for the Solo Founder OS agent stack — Source/MetricSample, baseline w/ rotation, HTTP retry, Anthropic client, notifiers (ntfy/Telegram/Slack), brief composer, testing helpers."
 authors = [{ name = "Alex Ji", email = "alex@vibexforge.com" }]
 license = { text = "MIT" }
@@ -30,6 +30,7 @@ dev = ["pytest>=8.0", "anthropic>=0.40"]
 sfos-doctor = "solo_founder_os.doctor:main"
 sfos-supervisor = "solo_founder_os.supervisor:main"
 sfos-evolver = "solo_founder_os.evolver:main"
+sfos-council = "solo_founder_os.council:main"
 
 [project.urls]
 Repository = "https://github.com/alex-jb/solo-founder-os"
