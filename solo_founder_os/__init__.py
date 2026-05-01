@@ -20,7 +20,7 @@ where one fix benefits all current AND future agents.
 Versioning policy: SemVer, but breaking changes only on major bumps.
 Internal modules (those starting with `_`) can break in minor versions.
 """
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 
 from .source import (
     Source,
@@ -96,6 +96,17 @@ from .council import (
     PRICING_DECISION_COUNCIL,
     BUG_TRIAGE_COUNCIL,
 )
+from .bandit import (
+    Bandit,
+    squash,
+)
+from .autopsy import (
+    autopsy,
+    render_markdown as render_autopsy_markdown,
+    MetricSource,
+    CriticHook,
+    BestTimeHook,
+)
 
 __all__ = [
     "Source", "SourceReport", "MetricSample", "SEVERITY_ORDER",
@@ -117,4 +128,7 @@ __all__ = [
     "CouncilMember", "Contribution", "CouncilOutput",
     "hold_meeting", "write_meeting",
     "LAUNCH_READINESS_COUNCIL", "PRICING_DECISION_COUNCIL", "BUG_TRIAGE_COUNCIL",
+    "Bandit", "squash",
+    "autopsy", "render_autopsy_markdown",
+    "MetricSource", "CriticHook", "BestTimeHook",
 ]
