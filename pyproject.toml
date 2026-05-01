@@ -33,7 +33,6 @@ sfos-evolver = "solo_founder_os.evolver:main"
 sfos-council = "solo_founder_os.council:main"
 sfos-bus = "solo_founder_os.agent_bus:main"
 sfos-inbox = "solo_founder_os.governance:main"
-sfos-retro = "solo_founder_os.cross_agent_report:main"
 sfos-eval = "solo_founder_os.eval:main"
 sfos-retro = "solo_founder_os.cross_agent_report:main"
 
