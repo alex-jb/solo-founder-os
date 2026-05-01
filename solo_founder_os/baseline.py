@@ -23,7 +23,7 @@ import statistics
 from datetime import datetime, timezone, timedelta
 from typing import Iterable
 
-from .source import MetricSample, SourceReport
+from .source import SourceReport
 
 
 BASELINE_WINDOW_DAYS = 7

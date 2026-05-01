@@ -1,7 +1,6 @@
 """Tests for scheduler — launchd plist + cron line builders."""
 from __future__ import annotations
 import os
-import pathlib
 import sys
 
 import pytest

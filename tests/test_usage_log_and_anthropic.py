@@ -2,12 +2,9 @@
 from __future__ import annotations
 import json
 import os
-import pathlib
 import sys
-from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -41,9 +38,9 @@ def test_log_usage_extra_fields(tmp_path):
 
 def test_log_usage_swallows_io_errors(tmp_path):
     """Best-effort logging — failure does not raise."""
-    bad_path = tmp_path / "nonexistent" / "deep" / "dir" / "u.jsonl"
-    # mkdir parents=True creates intermediate dirs, so this works. But we
-    # want to test the swallow path: pass a path whose parent IS a file.
+    # mkdir parents=True creates intermediate dirs, so a deeply nested
+    # nonexistent path works. To test the swallow path: pass a path whose
+    # parent IS a file.
     block = tmp_path / "blocker"
     block.write_text("i am a file not a dir")
     nested = block / "u.jsonl"

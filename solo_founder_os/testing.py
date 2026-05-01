@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import pathlib
 from datetime import datetime, timezone
-from typing import Any
 from unittest.mock import MagicMock
 
 from .source import MetricSample, SourceReport

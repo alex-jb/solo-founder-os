@@ -29,7 +29,6 @@ Usage:
 from __future__ import annotations
 import os
 import pathlib
-from typing import Iterable
 
 
 def _xml_escape(s: str) -> str:
@@ -78,7 +77,7 @@ def build_launchd_plist(
         '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
         '<plist version="1.0">',
         '<dict>',
-        f'    <key>Label</key>',
+        '    <key>Label</key>',
         f'    <string>{_xml_escape(label)}</string>',
         '    <key>ProgramArguments</key>',
         '    <array>',

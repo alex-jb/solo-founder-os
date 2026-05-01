@@ -6,7 +6,6 @@ import sys
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -70,7 +69,7 @@ def test_telegram_send_no_parse_mode(monkeypatch):
 
 def test_slack_send(monkeypatch):
     monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack.com/x")
-    with patch("urllib.request.urlopen", return_value=_ok()) as up:
+    with patch("urllib.request.urlopen", return_value=_ok()):
         ok = SlackNotifier().send("body")
     assert ok
 

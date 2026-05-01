@@ -8,7 +8,6 @@ import pathlib
 import sys
 from datetime import datetime, timezone, timedelta
 
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -16,7 +15,6 @@ from solo_founder_os.source import MetricSample, SourceReport
 from solo_founder_os.baseline import (
     enrich_with_baseline, record_samples,
     _baseline_for, _rotate_if_needed,
-    BASELINE_WINDOW_DAYS, ROTATE_KEEP_DAYS,
 )
 from solo_founder_os import baseline as bl
 
