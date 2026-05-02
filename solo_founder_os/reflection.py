@@ -20,6 +20,7 @@ by name. Treat the file like a public log; don't write secrets.
 """
 from __future__ import annotations
 import json
+import os
 import pathlib
 from datetime import datetime, timezone
 from typing import Optional
@@ -80,6 +81,15 @@ def log_outcome(
         "verbatim_signal": str(signal)[:500],
         "reflection": "",
     }
+
+    # Test-pollution guard: agents' test suites that don't isolate
+    # pathlib.Path.home() were silently appending fixture rows into the
+    # real ~/.<agent>/reflections.jsonl. Those rows then drove L4
+    # evolver to propose fixes for non-bugs. Setting SFOS_LOG_OUTCOME_SKIP=1
+    # in pytest config (via conftest or pyproject) opts the whole suite
+    # out without per-test monkeypatching.
+    if os.getenv("SFOS_LOG_OUTCOME_SKIP") == "1":
+        return entry
 
     needs_reflection = (outcome in ("FAILED", "PARTIAL")
                          and not skip_reflection)

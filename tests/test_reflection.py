@@ -70,6 +70,40 @@ def test_log_partial_also_generates_reflection(monkeypatch, tmp_path):
     assert entry["reflection"] == "check rate limits before retry"
 
 
+def test_log_outcome_skip_env_var_suppresses_write(monkeypatch, tmp_path):
+    """SFOS_LOG_OUTCOME_SKIP=1 → no file write, no Haiku call.
+
+    Test-pollution guard: agent test suites that don't isolate
+    pathlib.Path.home() were silently writing to the real
+    ~/.<agent>/reflections.jsonl. This env var lets a suite opt out
+    in conftest without per-test monkeypatching.
+    """
+    _patch_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("SFOS_LOG_OUTCOME_SKIP", "1")
+    fake = _fake_client()
+    entry = log_outcome(".test-agent", task="t1", outcome="FAILED",
+                         signal="x", client=fake)
+    # Returned entry shape is preserved (callers may inspect it)
+    assert entry["task"] == "t1"
+    assert entry["outcome"] == "FAILED"
+    # But: no Haiku call, no file written
+    assert fake.messages_create_json.call_count == 0
+    rfile = tmp_path / ".test-agent" / "reflections.jsonl"
+    assert not rfile.exists()
+
+
+def test_log_outcome_skip_env_var_off_still_writes(monkeypatch, tmp_path):
+    """When SFOS_LOG_OUTCOME_SKIP is anything other than '1', behavior
+    is unchanged."""
+    _patch_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("SFOS_LOG_OUTCOME_SKIP", "0")
+    fake = _fake_client()
+    log_outcome(".test-agent", task="t1", outcome="OK",
+                 signal="x", client=fake)
+    rfile = tmp_path / ".test-agent" / "reflections.jsonl"
+    assert rfile.exists()
+
+
 def test_log_skip_reflection_flag(monkeypatch, tmp_path):
     """Even on FAILED, the skip_reflection flag suppresses the Haiku call."""
     _patch_home(monkeypatch, tmp_path)
