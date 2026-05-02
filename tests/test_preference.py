@@ -41,6 +41,16 @@ def test_log_edit_truncates_long_strings(monkeypatch, tmp_path):
     assert len(entry["edited"]) == 5000
 
 
+def test_log_edit_test_mode_skips_write(monkeypatch, tmp_path):
+    """SFOS_TEST_MODE=1 → log_edit must NOT write to disk."""
+    _patch_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("SFOS_TEST_MODE", "1")
+    entry = log_edit(".test-agent", "draft_email", "a", "b")
+    assert entry["task"] == "draft_email"
+    log = tmp_path / ".test-agent" / "preference-pairs.jsonl"
+    assert not log.exists()
+
+
 def test_log_edit_swallows_filesystem_errors(monkeypatch, tmp_path):
     _patch_home(monkeypatch, tmp_path)
     # Make the agent dir a file so mkdir + open both fail

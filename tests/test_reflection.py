@@ -92,6 +92,20 @@ def test_log_outcome_skip_env_var_suppresses_write(monkeypatch, tmp_path):
     assert not rfile.exists()
 
 
+def test_log_outcome_umbrella_test_mode_also_skips(monkeypatch, tmp_path):
+    """SFOS_TEST_MODE=1 covers all 3 sinks (log_outcome, record_example,
+    log_edit) so agent conftests need only one env var."""
+    _patch_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("SFOS_TEST_MODE", "1")
+    monkeypatch.delenv("SFOS_LOG_OUTCOME_SKIP", raising=False)
+    fake = _fake_client()
+    log_outcome(".test-agent", task="t1", outcome="FAILED",
+                 signal="x", client=fake)
+    rfile = tmp_path / ".test-agent" / "reflections.jsonl"
+    assert not rfile.exists()
+    assert fake.messages_create_json.call_count == 0
+
+
 def test_log_outcome_skip_env_var_off_still_writes(monkeypatch, tmp_path):
     """When SFOS_LOG_OUTCOME_SKIP is anything other than '1', behavior
     is unchanged."""

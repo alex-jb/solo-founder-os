@@ -36,6 +36,7 @@ opts in. Treat it like a private notebook.
 """
 from __future__ import annotations
 import json
+import os
 import pathlib
 from datetime import datetime, timezone
 from typing import Optional
@@ -69,6 +70,9 @@ def log_edit(
         "context": context or {},
         "note": str(note)[:300],
     }
+    # Test-pollution guard — see reflection.log_outcome for context.
+    if os.getenv("SFOS_TEST_MODE") == "1":
+        return entry
     path = _path(agent_dir)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)

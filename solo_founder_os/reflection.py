@@ -85,10 +85,13 @@ def log_outcome(
     # Test-pollution guard: agents' test suites that don't isolate
     # pathlib.Path.home() were silently appending fixture rows into the
     # real ~/.<agent>/reflections.jsonl. Those rows then drove L4
-    # evolver to propose fixes for non-bugs. Setting SFOS_LOG_OUTCOME_SKIP=1
+    # evolver to propose fixes for non-bugs. Setting SFOS_TEST_MODE=1
     # in pytest config (via conftest or pyproject) opts the whole suite
-    # out without per-test monkeypatching.
-    if os.getenv("SFOS_LOG_OUTCOME_SKIP") == "1":
+    # out — covers reflection, skills.record_example, and preference.log_edit
+    # together. SFOS_LOG_OUTCOME_SKIP is kept as an alias for v0.20.2
+    # back-compat.
+    if (os.getenv("SFOS_TEST_MODE") == "1"
+            or os.getenv("SFOS_LOG_OUTCOME_SKIP") == "1"):
         return entry
 
     needs_reflection = (outcome in ("FAILED", "PARTIAL")

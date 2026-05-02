@@ -47,6 +47,7 @@ This module exposes:
 """
 from __future__ import annotations
 import json
+import os
 import pathlib
 import re
 from dataclasses import dataclass, field
@@ -408,6 +409,9 @@ def record_example(
     distillation. The supervisor or a separate distill cron decides when
     to actually call Haiku to re-derive the skill.
     """
+    # Test-pollution guard — see reflection.log_outcome for context.
+    if os.getenv("SFOS_TEST_MODE") == "1":
+        return
     d = (base or pathlib.Path.home() / ".solo-founder-os") / "examples"
     entry = {
         "ts": datetime.now(timezone.utc).isoformat(),

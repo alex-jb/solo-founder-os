@@ -265,6 +265,15 @@ def test_record_and_load_examples(tmp_path):
     assert loaded[1]["note"] == "reply in 2d"
 
 
+def test_record_example_test_mode_skips_write(monkeypatch, tmp_path):
+    """SFOS_TEST_MODE=1 → record_example must NOT write to disk.
+    Symmetric guard to log_outcome's so agent test suites can opt out
+    via one env var in conftest."""
+    monkeypatch.setenv("SFOS_TEST_MODE", "1")
+    record_example("x", {"a": "b"}, "out", base=tmp_path)
+    assert not (tmp_path / "examples" / "x.jsonl").exists()
+
+
 def test_record_example_swallows_filesystem_errors(tmp_path):
     """Read-only filesystem etc. should not crash the calling agent."""
     blocker = tmp_path / "blocker"
