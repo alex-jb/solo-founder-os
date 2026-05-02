@@ -181,6 +181,82 @@ def test_scan_bandit_missing_db():
     assert _scan_bandit() == []
 
 
+def _create_bandit_table(db_path: pathlib.Path,
+                          rows: list[tuple]) -> None:
+    """Helper: build a bandit_arm table at db_path with the given rows."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript("""
+            CREATE TABLE bandit_arm (
+              agent TEXT, channel TEXT, variant_key TEXT,
+              alpha REAL, beta REAL, n_pulls INTEGER, last_updated TEXT,
+              PRIMARY KEY (agent, channel, variant_key)
+            );
+        """)
+        for r in rows:
+            conn.execute(
+                "INSERT INTO bandit_arm VALUES (?,?,?,?,?,?,?)",
+                r,
+            )
+
+
+def test_scan_bandit_aggregates_across_multiple_dbs(tmp_path):
+    """SFOS shared bandit + marketing's history.db both contribute,
+    results carry the source filename for provenance."""
+    sfos_db = tmp_path / ".solo-founder-os" / "bandit.sqlite"
+    mkt_db = tmp_path / ".marketing_agent" / "history.db"
+    _create_bandit_table(sfos_db, [
+        ("vc-outreach", "email", "long-form", 8.0, 2.0, 10, ""),
+    ])
+    _create_bandit_table(mkt_db, [
+        ("marketing-agent", "x", "emoji-led", 5.0, 1.0, 5, ""),
+        ("marketing-agent", "x", "stat-led", 2.0, 4.0, 5, ""),
+    ])
+    out = _scan_bandit()
+    by_pair = {(b["agent"], b["channel"]): b for b in out}
+    assert ("vc-outreach", "email") in by_pair
+    assert ("marketing-agent", "x") in by_pair
+    # Source DB filenames should be tagged
+    assert "bandit.sqlite" in by_pair[("vc-outreach", "email")]["sources"]
+    assert "history.db" in by_pair[("marketing-agent", "x")]["sources"]
+
+
+def test_scan_bandit_skips_corrupt_db(tmp_path, monkeypatch):
+    """A corrupt SQLite file shouldn't crash the retro — just yield no
+    rows from that file."""
+    corrupt = tmp_path / ".solo-founder-os" / "bandit.sqlite"
+    corrupt.parent.mkdir(parents=True)
+    corrupt.write_text("not a sqlite file")
+    out = _scan_bandit()
+    assert out == []
+
+
+def test_scan_bandit_skips_db_without_bandit_arm_table(tmp_path):
+    """A SQLite file that lacks the bandit_arm table (e.g. an unrelated
+    history.db) should be silently skipped, not raise."""
+    db = tmp_path / ".marketing_agent" / "history.db"
+    db.parent.mkdir(parents=True)
+    with sqlite3.connect(db) as conn:
+        conn.executescript(
+            "CREATE TABLE other (x INTEGER); INSERT INTO other VALUES (1);"
+        )
+    out = _scan_bandit()
+    assert out == []
+
+
+def test_scan_bandit_explicit_db_paths_argument(tmp_path):
+    """Passing db_paths overrides the default scan list — useful for
+    tests and for callers that want to constrain the scan."""
+    custom = tmp_path / "custom.sqlite"
+    _create_bandit_table(custom, [
+        ("custom-agent", "ch", "v1", 1.0, 1.0, 1, ""),
+    ])
+    out = _scan_bandit(db_paths=[custom])
+    assert len(out) == 1
+    assert out[0]["agent"] == "custom-agent"
+    assert "custom.sqlite" in out[0]["sources"]
+
+
 # ───────────────── collect + render ─────────────────
 
 

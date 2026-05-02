@@ -54,6 +54,18 @@ KNOWN_AGENT_DIRS: list[str] = [
 SHARED_SKILLS_DIR = pathlib.Path.home() / ".solo-founder-os" / "skills"
 SHARED_BANDIT_DB = pathlib.Path.home() / ".solo-founder-os" / "bandit.sqlite"
 
+# Where bandit_arm tables actually live across the stack. The SFOS
+# convention is one dedicated file per dir, but marketing-agent keeps
+# its bandit_arm inside the multi-table history.db. Adding new agents'
+# bandit DBs here means sfos-retro can see them without a code change
+# in cross_agent_report.
+KNOWN_BANDIT_PATHS: list[pathlib.Path] = [
+    SHARED_BANDIT_DB,
+    pathlib.Path.home() / ".marketing_agent" / "history.db",
+    pathlib.Path.home() / ".marketing_agent" / "bandit.sqlite",
+    pathlib.Path.home() / ".orallexa-marketing-agent" / "bandit.sqlite",
+]
+
 
 # ───────────────── data collectors ─────────────────
 
@@ -189,27 +201,69 @@ def _scan_skills() -> list[dict]:
     return sorted(out, key=lambda r: r["mtime"], reverse=True)
 
 
-def _scan_bandit() -> list[dict]:
-    """Per-(agent, channel) bandit winners + arm summary."""
-    if not SHARED_BANDIT_DB.exists():
+def _scan_bandit_db(db_path: pathlib.Path) -> list[tuple]:
+    """Pull bandit_arm rows from one SQLite file. Returns [] if the file
+    doesn't exist or doesn't have the bandit_arm table (marketing's
+    history.db has it; SFOS shared bandit.sqlite has it; other agents'
+    files might not)."""
+    if not db_path.exists():
         return []
-    out: list[dict] = []
-    with sqlite3.connect(SHARED_BANDIT_DB) as conn:
-        try:
-            rows = conn.execute(
+    try:
+        with sqlite3.connect(db_path) as conn:
+            return conn.execute(
                 """SELECT agent, channel, variant_key, alpha, beta, n_pulls
                    FROM bandit_arm
                    ORDER BY agent, channel, n_pulls DESC"""
             ).fetchall()
-        except sqlite3.OperationalError:
-            return []
+    except sqlite3.OperationalError:
+        # Table missing — common when scanning per-agent files that
+        # don't store bandit data.
+        return []
+    except sqlite3.DatabaseError:
+        # Corrupt file — skip silently rather than crashing the retro.
+        return []
+
+
+def _scan_bandit(
+    db_paths: Optional[list[pathlib.Path]] = None,
+) -> list[dict]:
+    """Per-(agent, channel) bandit winners + arm summary across every
+    known bandit DB in the stack. Each result row carries `source` so
+    the retro can show which DB the data came from when there are
+    duplicates.
+
+    `db_paths` defaults to a fresh list resolved from the current
+    SHARED_BANDIT_DB module-level constant (so test monkeypatching of
+    SHARED_BANDIT_DB still routes here) plus the well-known marketing-
+    agent locations.
+    """
+    if db_paths is None:
+        paths = [
+            SHARED_BANDIT_DB,
+            pathlib.Path.home() / ".marketing_agent" / "history.db",
+            pathlib.Path.home() / ".marketing_agent" / "bandit.sqlite",
+            pathlib.Path.home() / ".orallexa-marketing-agent"
+                / "bandit.sqlite",
+        ]
+    else:
+        paths = db_paths
     by_pair: dict[tuple, list[dict]] = defaultdict(list)
-    for agent, channel, vk, alpha, beta, n_pulls in rows:
-        by_pair[(agent, channel)].append({
-            "variant_key": vk,
-            "n_pulls": int(n_pulls),
-            "mean": round(alpha / (alpha + beta), 4),
-        })
+    sources: dict[tuple, set[str]] = defaultdict(set)
+    for db_path in paths:
+        rows = _scan_bandit_db(db_path)
+        for agent, channel, vk, alpha, beta, n_pulls in rows:
+            try:
+                mean = round(alpha / (alpha + beta), 4)
+            except ZeroDivisionError:
+                mean = 0.0
+            by_pair[(agent, channel)].append({
+                "variant_key": vk,
+                "n_pulls": int(n_pulls),
+                "mean": mean,
+            })
+            sources[(agent, channel)].add(db_path.name)
+
+    out: list[dict] = []
     for (agent, channel), arms in by_pair.items():
         winner = max(arms, key=lambda a: a["mean"])["variant_key"]
         total = sum(a["n_pulls"] for a in arms)
@@ -219,6 +273,7 @@ def _scan_bandit() -> list[dict]:
             "winner": winner,
             "total_pulls": total,
             "arms": arms,
+            "sources": sorted(sources[(agent, channel)]),
         })
     return out
 
@@ -319,15 +374,16 @@ def render_markdown(report: dict) -> str:
     if report["bandit"]:
         lines.append("## Bandit winners per (agent, channel)")
         lines.append("")
-        lines.append("| agent | channel | winner | total pulls | arms |")
-        lines.append("|---|---|---|---|---|")
+        lines.append("| agent | channel | winner | total pulls | arms | source |")
+        lines.append("|---|---|---|---|---|---|")
         for b in report["bandit"]:
             arms_s = ", ".join(f"{a['variant_key']} (n={a['n_pulls']}, "
                                   f"μ={a['mean']})"
                                   for a in b["arms"])
+            sources = ", ".join(b.get("sources", []))
             lines.append(f"| {b['agent']} | {b['channel']} | "
                             f"**{b['winner']}** | {b['total_pulls']} | "
-                            f"{arms_s} |")
+                            f"{arms_s} | `{sources}` |")
         lines.append("")
 
     return "\n".join(lines) + "\n"
