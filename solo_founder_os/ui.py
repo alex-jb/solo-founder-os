@@ -38,7 +38,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from .hitl_queue import APPROVED, REJECTED, HitlQueue
+from .hitl_queue import APPROVED, REJECTED, HitlQueue, parse_frontmatter
+from .preference import log_edit
 
 
 # Keep in sync with cross_agent_report.KNOWN_AGENT_DIRS.
@@ -274,6 +275,88 @@ def act_on_pending(item: PendingItem, *, verdict: str) -> pathlib.Path:
     return q.move(item.path, to=verdict)
 
 
+# ──────────────────────────── ICPL edit-detection ────────────────────────────
+
+
+def split_frontmatter(text: str) -> tuple[str, str]:
+    """Split a `---\\n…\\n---\\nbody` markdown into (frontmatter_block, body).
+
+    Both halves include their separators on the frontmatter side so that
+    `frontmatter + body == text` losslessly. Returns ('', text) when the
+    document has no frontmatter."""
+    if not text.startswith("---\n"):
+        return "", text
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        return "", text
+    return text[: end + 5], text[end + 5:]
+
+
+def infer_task(frontmatter: dict, agent_slug: str) -> str:
+    """Pick a stable task identifier from the markdown frontmatter for
+    ICPL bookkeeping. Heuristic, ordered:
+
+      1. explicit `task:` field (the canonical SFOS convention)
+      2. `platform:` (marketing-agent posts: x / linkedin / reddit)
+      3. `kind:` (some HITL queues use this)
+      4. fallback: '<agent-slug-without-dot>-draft'
+
+    Different (agent, task) tuples accumulate independent preference
+    pools, so the choice matters for ICPL pre-amble retrieval."""
+    for key in ("task", "platform", "kind"):
+        v = frontmatter.get(key)
+        if v:
+            return str(v)[:80]
+    return f"{agent_slug.lstrip('.')}-draft"[:80]
+
+
+def approve_with_edit(
+    item: PendingItem,
+    *,
+    edited_text: str,
+    original_text: str,
+) -> tuple[pathlib.Path, bool]:
+    """The inbox-side equivalent of "user clicked Approve on possibly-
+    edited content."
+
+    1. If `edited_text` differs from `original_text`, persist the edit
+       to disk before moving (so the approved/ copy reflects what the
+       user actually approved).
+    2. If the BODY portion differs, log an ICPL preference pair so
+       future drafts of the same (agent, task) can pick up the user's
+       voice as few-shot exemplars.
+    3. Always move the file to approved/.
+
+    Returns (new_path, was_edited).
+    """
+    was_edited = edited_text != original_text
+    if was_edited:
+        item.path.write_text(edited_text, encoding="utf-8")
+        # Body-only diff drives the preference signal — frontmatter
+        # changes (timestamps, etc) are noise for ICPL.
+        _, orig_body = split_frontmatter(original_text)
+        new_fm_text, new_body = split_frontmatter(edited_text)
+        if orig_body != new_body and orig_body and new_body:
+            try:
+                fm = parse_frontmatter(new_fm_text + "body")
+            except Exception:
+                fm = {}
+            task = infer_task(fm, item.agent)
+            log_edit(
+                item.agent,
+                task,
+                original=orig_body,
+                edited=new_body,
+                context={
+                    "filename": item.filename,
+                    "queue_root": str(item.queue_root),
+                },
+                note="approved via sfos-ui inbox",
+            )
+    new_path = act_on_pending(item, verdict=APPROVED)
+    return new_path, was_edited
+
+
 # ──────────────────────────── Streamlit rendering ────────────────────────────
 
 
@@ -356,19 +439,44 @@ def _render_inbox() -> None:
             st.markdown(f"### `{sel_item.agent}` / {sel_item.filename}")
 
             try:
-                content = sel_item.path.read_text(encoding="utf-8")
+                original_text = sel_item.path.read_text(encoding="utf-8")
             except OSError as e:
                 st.error(f"Could not read file: {e}")
-                content = ""
+                original_text = ""
 
-            # Action buttons FIRST so they're above the fold.
+            # Editable buffer. Edits before approval are how ICPL
+            # learns Alex's voice — the (original_body, edited_body)
+            # diff feeds preference_preamble on the next draft.
+            edit_key = f"edit-{sel_item.path}"
+            edited_text = st.text_area(
+                "Markdown (edit before approving — diff feeds ICPL)",
+                value=original_text,
+                key=edit_key,
+                height=400,
+            )
+
+            # Action buttons.
             ac, rc, _ = st.columns([1, 1, 4])
             if ac.button("✅ Approve", key=f"appr-{sel_item.path}"):
                 try:
-                    new_path = act_on_pending(sel_item, verdict=APPROVED)
-                    st.success(f"Approved → {new_path.name}")
-                    # Clear selection so the fragment picks the next.
+                    new_path, was_edited = approve_with_edit(
+                        sel_item,
+                        edited_text=edited_text,
+                        original_text=original_text,
+                    )
+                    if was_edited:
+                        st.success(
+                            f"Approved (with edits) → {new_path.name}"
+                        )
+                        st.caption(
+                            "ICPL pair logged — future drafts of this "
+                            "(agent, task) get your edit as a few-shot "
+                            "exemplar."
+                        )
+                    else:
+                        st.success(f"Approved → {new_path.name}")
                     st.session_state.pop("inbox_selected", None)
+                    st.session_state.pop(edit_key, None)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Move failed: {e}")
@@ -377,12 +485,16 @@ def _render_inbox() -> None:
                     new_path = act_on_pending(sel_item, verdict=REJECTED)
                     st.warning(f"Rejected → {new_path.name}")
                     st.session_state.pop("inbox_selected", None)
+                    st.session_state.pop(edit_key, None)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Move failed: {e}")
 
-            st.divider()
-            st.markdown(content)
+            # Read-only preview below the editor — useful when the
+            # markdown contains code blocks or lists that don't render
+            # well as raw text.
+            with st.expander("Rendered preview"):
+                st.markdown(edited_text)
 
     _inbox_body()
 

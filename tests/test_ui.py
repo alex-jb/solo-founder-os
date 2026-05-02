@@ -20,6 +20,8 @@ from solo_founder_os.ui import (
     KNOWN_AGENT_DIRS,
     PendingItem,
     act_on_pending,
+    approve_with_edit,
+    infer_task,
     main,
     scan_cron_logs,
     scan_evals,
@@ -27,6 +29,7 @@ from solo_founder_os.ui import (
     scan_pending_queues,
     scan_proposals,
     scan_reflexions,
+    split_frontmatter,
     stack_status,
 )
 
@@ -321,6 +324,154 @@ def test_act_on_pending_invalid_verdict_raises(tmp_path):
     item = scan_pending_items(home=tmp_path)[0]
     with pytest.raises(ValueError):
         act_on_pending(item, verdict="snoozed")
+
+
+# ──────────────────────────── split_frontmatter ────────────────────────────
+
+
+def test_split_frontmatter_basic():
+    text = ("---\n"
+            "platform: x\n"
+            "task: draft\n"
+            "---\n"
+            "Hello world\n")
+    fm, body = split_frontmatter(text)
+    assert "platform: x" in fm
+    assert body == "Hello world\n"
+    # Lossless reassembly
+    assert fm + body == text
+
+
+def test_split_frontmatter_no_frontmatter():
+    text = "Just a plain markdown doc\n"
+    fm, body = split_frontmatter(text)
+    assert fm == ""
+    assert body == text
+
+
+def test_split_frontmatter_unterminated_falls_back():
+    """Opening --- but no closing --- → treat whole thing as body."""
+    text = "---\nplatform: x\nno closing\n"
+    fm, body = split_frontmatter(text)
+    assert fm == ""
+    assert body == text
+
+
+# ──────────────────────────── infer_task ────────────────────────────
+
+
+def test_infer_task_prefers_task_field():
+    assert infer_task({"task": "draft_email", "platform": "x"},
+                        ".vc-outreach-agent") == "draft_email"
+
+
+def test_infer_task_falls_back_to_platform():
+    """Marketing-agent posts have `platform:` but not `task:`."""
+    assert infer_task({"platform": "linkedin"},
+                        ".orallexa-marketing-agent") == "linkedin"
+
+
+def test_infer_task_falls_back_to_kind():
+    assert infer_task({"kind": "support_reply"},
+                        ".customer-support-agent") == "support_reply"
+
+
+def test_infer_task_default_uses_agent_slug():
+    assert infer_task({}, ".vc-outreach-agent") == "vc-outreach-agent-draft"
+
+
+# ──────────────────────────── approve_with_edit ────────────────────────────
+
+
+def _setup_pending(tmp_path, body: str = "draft body") -> PendingItem:
+    pdir = tmp_path / ".vc-outreach-agent" / "queue" / "pending"
+    pdir.mkdir(parents=True)
+    text = (
+        "---\n"
+        "platform: x\n"
+        "task: draft_email\n"
+        "---\n"
+        f"{body}"
+    )
+    (pdir / "draft.md").write_text(text)
+    return scan_pending_items(home=tmp_path)[0]
+
+
+def test_approve_with_edit_no_changes_just_moves(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    item = _setup_pending(tmp_path)
+    original = item.path.read_text()
+    new_path, was_edited = approve_with_edit(
+        item, edited_text=original, original_text=original,
+    )
+    assert was_edited is False
+    assert new_path.parent.name == "approved"
+    # No preference-pairs.jsonl written when nothing was edited
+    assert not (tmp_path / ".vc-outreach-agent"
+                  / "preference-pairs.jsonl").exists()
+
+
+def test_approve_with_edit_writes_back_and_logs_pair(tmp_path, monkeypatch):
+    """When the body is edited, the new content lands in approved/ AND
+    a preference pair shows up in ~/.<agent>/preference-pairs.jsonl."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("SFOS_TEST_MODE", raising=False)
+    item = _setup_pending(tmp_path, body="original body")
+    original = item.path.read_text()
+    edited = original.replace("original body", "edited better body")
+    new_path, was_edited = approve_with_edit(
+        item, edited_text=edited, original_text=original,
+    )
+    assert was_edited is True
+    assert new_path.parent.name == "approved"
+    # Edited content persisted
+    assert "edited better body" in new_path.read_text()
+    # ICPL pair recorded
+    pref_log = tmp_path / ".vc-outreach-agent" / "preference-pairs.jsonl"
+    assert pref_log.exists()
+    rows = [json.loads(line) for line in pref_log.read_text().splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["task"] == "draft_email"
+    assert "original body" in rows[0]["original"]
+    assert "edited better body" in rows[0]["edited"]
+
+
+def test_approve_with_edit_frontmatter_only_change_no_pref_pair(
+    tmp_path, monkeypatch,
+):
+    """If only the frontmatter changed (e.g. timestamp), don't log
+    preference — that's noise, not Alex's voice."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("SFOS_TEST_MODE", raising=False)
+    item = _setup_pending(tmp_path, body="same body")
+    original = item.path.read_text()
+    edited = original.replace("platform: x", "platform: linkedin")
+    new_path, was_edited = approve_with_edit(
+        item, edited_text=edited, original_text=original,
+    )
+    assert was_edited is True  # File was rewritten
+    pref_log = tmp_path / ".vc-outreach-agent" / "preference-pairs.jsonl"
+    # No preference pair because the body didn't change
+    assert not pref_log.exists()
+    assert "platform: linkedin" in new_path.read_text()
+
+
+def test_approve_with_edit_test_mode_skips_pref_log(tmp_path, monkeypatch):
+    """SFOS_TEST_MODE=1 → log_edit short-circuits, but the file still
+    moves correctly."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("SFOS_TEST_MODE", "1")
+    item = _setup_pending(tmp_path, body="x")
+    original = item.path.read_text()
+    edited = original.replace("x", "y")
+    new_path, was_edited = approve_with_edit(
+        item, edited_text=edited, original_text=original,
+    )
+    assert was_edited is True
+    assert new_path.parent.name == "approved"
+    # Test-mode guard prevented the write
+    assert not (tmp_path / ".vc-outreach-agent"
+                  / "preference-pairs.jsonl").exists()
 
 
 def test_main_returns_2_when_streamlit_missing(monkeypatch, capsys):
