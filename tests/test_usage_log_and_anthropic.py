@@ -225,6 +225,32 @@ def test_client_caches_system_by_default(monkeypatch):
     assert captured["system"][0]["cache_control"] == {"type": "ephemeral"}
 
 
+def test_client_drops_falsy_system_kwarg(monkeypatch):
+    """Regression: API now rejects `system: null` with
+    pydantic 'Input should be a valid array'. Callers passing
+    system=None (e.g. eval._judge_one) must not have it forwarded."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    captured: dict = {}
+
+    def capture(**kwargs):
+        captured.update(kwargs)
+        block = MagicMock(); block.text = "ok"; block.type = "text"
+        resp = MagicMock(); resp.content = [block]
+        resp.usage.input_tokens = 0
+        resp.usage.output_tokens = 0
+        return resp
+
+    fake = MagicMock()
+    fake.messages.create.side_effect = capture
+    with patch("anthropic.Anthropic", return_value=fake):
+        c = AnthropicClient()
+        c.messages_create(model="x", max_tokens=1, system=None, messages=[])
+        assert "system" not in captured
+        captured.clear()
+        c.messages_create(model="x", max_tokens=1, system="", messages=[])
+        assert "system" not in captured
+
+
 def test_client_skips_caching_when_disabled(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     captured: dict = {}

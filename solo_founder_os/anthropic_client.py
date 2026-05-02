@@ -166,6 +166,11 @@ class AnthropicClient:
         cache_system = kwargs.pop("cache_system", self.cache_system)
         cache_ttl = kwargs.pop("cache_ttl", self.cache_ttl)
 
+        # API now rejects `system: null` (pydantic: "Input should be a
+        # valid array"). Drop the key entirely when it's None / empty so
+        # callers can pass `system=None` to mean "no system prompt".
+        if "system" in kwargs and not kwargs["system"]:
+            del kwargs["system"]
         if cache_system and "system" in kwargs:
             kwargs["system"] = _wrap_system_with_cache(
                 kwargs["system"], ttl=cache_ttl)
