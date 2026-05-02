@@ -274,18 +274,85 @@ PROPOSAL_SCHEMA = {
 }
 
 
+def find_council_synthesis_for_skill(
+    skill: str, *, base: Optional[pathlib.Path] = None,
+) -> Optional[str]:
+    """Look for the most recent sfos-council meeting on this skill and
+    return its synthesis section. Used by synthesize_proposal to inject
+    multi-perspective deliberation into the evolver's Haiku prompt
+    when L5 has already weighed in on a drift signal.
+
+    Matches by frontmatter `topic: drift on <skill>` (the canonical
+    output of council.convene_drift_council). Returns the body text
+    under "## Synthesis" (or None if no matching meeting).
+    """
+    base = base or pathlib.Path.home() / ".solo-founder-os" / "council-meetings"
+    if not base.exists():
+        return None
+    candidates = sorted(base.glob("*.md"), reverse=True)  # newest first
+    needle = f"drift on {skill}"
+    for path in candidates:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        # Match against frontmatter topic line.
+        if not text.startswith("---\n"):
+            continue
+        end = text.find("\n---\n", 4)
+        if end < 0:
+            continue
+        fm = text[4:end]
+        if f"topic: {needle}" not in fm:
+            continue
+        # Extract the "## Synthesis" section (everything after the
+        # heading up to EOF or the next top-level heading).
+        marker = "## Synthesis"
+        i = text.find(marker)
+        if i < 0:
+            return None
+        synth_block = text[i + len(marker):].lstrip()
+        # Stop at the next "## " heading if present.
+        nxt = synth_block.find("\n## ")
+        if nxt > 0:
+            synth_block = synth_block[:nxt]
+        return synth_block.strip() or None
+    return None
+
+
 def synthesize_proposal(
     pattern: FailurePattern,
     *,
     client: Optional[AnthropicClient] = None,
+    council_synthesis: Optional[str] = None,
 ) -> Optional[Proposal]:
     """One Haiku call — given the pattern, propose a concrete fix.
+
+    `council_synthesis` is optional L5 deliberation output. When passed,
+    it's injected into the user prompt as additional context so the
+    Haiku patch reflects multi-perspective analysis instead of a
+    one-shot guess. Used by main() automatically for quality-drift
+    patterns whose skill has a recent council meeting on file.
+
     Returns None if the proposal is unsafe (target_file blocked) or
     empty (Haiku declined). Never raises."""
     if client is None:
         client = AnthropicClient(usage_log_path=EVOLVER_USAGE_LOG)
     if not client.configured:
         return None
+
+    council_block = ""
+    if council_synthesis:
+        council_block = (
+            "\nL5 council deliberation already concluded. Use this as\n"
+            "context when proposing — the perspectives below have been\n"
+            "synthesized; your job is to translate the conclusion into\n"
+            "a concrete code change.\n"
+            "\n"
+            "--- Council synthesis ---\n"
+            f"{council_synthesis[:2000]}\n"
+            "--- End council ---\n"
+        )
 
     user = (
         "You're proposing a code-level improvement to a Python agent.\n"
@@ -297,6 +364,7 @@ def synthesize_proposal(
         "\n"
         "Sample failure signals:\n"
         + "\n".join(f"  - {s[:200]}" for s in pattern.sample_signals)
+        + council_block
         + "\n\n"
         "Hard rules — VIOLATING ANY OF THESE means output empty diff:\n"
         "  1. Target file MUST be one of: drafter.py, translator.py,\n"
@@ -487,10 +555,23 @@ def main(argv: Optional[list[str]] = None) -> int:
               f"{pat.signal_bucket}", file=sys.stderr)
 
     proposals: list[Proposal] = []
+    n_council_injected = 0
     for pat in patterns[:args.max_proposals]:
-        proposal = synthesize_proposal(pat)
+        # L5→L4 wire: if this is a quality-drift pattern AND the L5
+        # council has weighed in (sfos-council --auto-from-drift wrote
+        # a meeting note for the skill), inject the synthesis into the
+        # Haiku prompt. Reflexion-driven patterns get plain synthesis.
+        council_synth: Optional[str] = None
+        if "quality-drift" in pat.signal_bucket:
+            council_synth = find_council_synthesis_for_skill(pat.task)
+            if council_synth:
+                n_council_injected += 1
+        proposal = synthesize_proposal(pat, council_synthesis=council_synth)
         if proposal is not None:
             proposals.append(proposal)
+    if n_council_injected:
+        print(f"  + {n_council_injected} proposal(s) used L5 council "
+              "synthesis as context", file=sys.stderr)
 
     if not proposals:
         print("No safe proposals could be synthesized.", file=sys.stderr)

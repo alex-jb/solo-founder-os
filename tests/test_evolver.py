@@ -18,6 +18,7 @@ from solo_founder_os.evolver import (
     FailurePattern,
     Proposal,
     _bucket_signal,
+    find_council_synthesis_for_skill,
     find_drift_patterns,
     find_recurring_patterns,
     is_safe_path,
@@ -518,3 +519,148 @@ def test_main_drift_disabled_with_zero_threshold(
                       .glob("*.md")) if (tmp_path / ".solo-founder-os"
                       / "evolver-proposals").exists() else []
     assert artifacts == []
+
+
+# ── L5↔L4 wire: council synthesis injection ─────────────────
+
+
+def _plant_council_meeting(home: pathlib.Path, skill: str,
+                              synthesis: str) -> pathlib.Path:
+    """Write a sfos-council-shaped meeting note for the given skill."""
+    base = home / ".solo-founder-os" / "council-meetings"
+    base.mkdir(parents=True, exist_ok=True)
+    path = base / f"2026-05-02-1830-drift-on-{skill}.md"
+    path.write_text(
+        "---\n"
+        f"topic: drift on {skill}\n"
+        "question: what to do?\n"
+        "generated_at: 2026-05-02T18:30:00+00:00\n"
+        "members: [a, b, c]\n"
+        "---\n"
+        "\n"
+        f"# Council meeting: drift on {skill}\n"
+        "\n"
+        "## Contributions\n"
+        "\n"
+        "### product (`a`)\n"
+        "x said y\n"
+        "\n"
+        "## Synthesis\n"
+        "\n"
+        f"{synthesis}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_find_council_synthesis_returns_synthesis_block(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    _plant_council_meeting(tmp_path, "draft-vc-email",
+                              synthesis="Tighten the schema; require key match.")
+    out = find_council_synthesis_for_skill("draft-vc-email")
+    assert out is not None
+    assert "Tighten the schema" in out
+
+
+def test_find_council_synthesis_skill_with_no_meeting_returns_none(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    out = find_council_synthesis_for_skill("draft-vc-email")
+    assert out is None
+
+
+def test_find_council_synthesis_picks_newest(monkeypatch, tmp_path):
+    """When 2 meetings exist for the same skill, return the newer
+    synthesis (the most recent take wins)."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    base = tmp_path / ".solo-founder-os" / "council-meetings"
+    base.mkdir(parents=True)
+    # Older meeting — earlier filename
+    (base / "2026-05-01-foo.md").write_text(
+        "---\ntopic: drift on draft-x\n---\n\n## Synthesis\n\nold\n",
+        encoding="utf-8",
+    )
+    # Newer meeting — later filename
+    (base / "2026-05-02-foo.md").write_text(
+        "---\ntopic: drift on draft-x\n---\n\n## Synthesis\n\nnew\n",
+        encoding="utf-8",
+    )
+    out = find_council_synthesis_for_skill("draft-x")
+    assert out == "new"
+
+
+def test_synthesize_proposal_injects_council_synthesis_into_prompt(
+    monkeypatch,
+):
+    """When council_synthesis is passed, the user prompt must contain
+    the council block + the synthesis text — that's the whole point of
+    the L5→L4 wire."""
+    captured: dict = {}
+
+    class FakeClient:
+        configured = True
+        def messages_create_json(self, **kw):
+            captured["messages"] = kw.get("messages")
+            return ({
+                "target_file": "vc_outreach_agent/drafter.py",
+                "rationale": "ok",
+                "diff": "+ change\n",
+                "test_case": "",
+            }, None)
+
+    pat = FailurePattern(
+        agent=".solo-founder-os",
+        task="draft-vc-email",
+        signal_bucket="quality-drift mean 4.5 → 2.0 (delta -2.5)",
+        count=25,
+        sample_signals=["overall=2.0 (weak voice)"],
+    )
+    proposal = synthesize_proposal(
+        pat, client=FakeClient(),
+        council_synthesis="Tighten schema; require key match.",
+    )
+    assert proposal is not None
+    body = captured["messages"][0]["content"]
+    assert "L5 council deliberation" in body
+    assert "Tighten schema; require key match." in body
+    assert "End council" in body
+
+
+def test_main_drift_pattern_picks_up_council_synthesis(
+    monkeypatch, tmp_path, capsys,
+):
+    """End-to-end: plant drift evals + a council meeting on the same
+    skill → main() should report the injection in stderr AND the
+    artifact's diff was synthesized with council context."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.delenv("EVOLVER_SKIP", raising=False)
+    _plant_eval_pair(tmp_path, "draft-vc-email",
+                       prev_mean=4.5, curr_mean=2.0)
+    _plant_council_meeting(tmp_path, "draft-vc-email",
+                              synthesis="Schema is too loose. Tighten it.")
+    captured: dict = {}
+
+    import solo_founder_os.evolver as ev
+    class FakeClient:
+        configured = True
+        def messages_create_json(self, **kw):
+            captured.setdefault("calls", []).append(kw)
+            return ({
+                "target_file": "vc_outreach_agent/drafter.py",
+                "rationale": "schema tightening per council",
+                "diff": "+ schema-change\n",
+                "test_case": "",
+            }, None)
+    monkeypatch.setattr(ev, "AnthropicClient", lambda **kw: FakeClient())
+
+    rc = main([])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "1 proposal(s) used L5 council synthesis" in err
+    # Verify the council content actually reached the Haiku prompt
+    body = captured["calls"][0]["messages"][0]["content"]
+    assert "Schema is too loose" in body
