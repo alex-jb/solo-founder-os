@@ -102,6 +102,14 @@ def test_render_wrapper_marked_auto_generated():
     assert "DO NOT EDIT" in body
 
 
+def test_render_wrapper_suppresses_runpy_warning():
+    """The -W ignore::RuntimeWarning:runpy flag was added in v0.25.1
+    after the harmless runpy warning kept showing up in cron-logs.
+    Scoped to runpy specifically so real RuntimeWarnings still surface."""
+    body = render_wrapper(JOBS[0])
+    assert "-W ignore::RuntimeWarning:runpy" in body
+
+
 # ───────────────── write_job_files ─────────────────
 
 

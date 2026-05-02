@@ -455,6 +455,19 @@ def _render_inbox() -> None:
                 height=400,
             )
 
+            # Keyboard shortcuts: A = approve, R = reject. These bind
+            # the literal button labels below — streamlit-shortcuts
+            # injects a JS keydown handler that clicks the matching
+            # button. Optional dep, gracefully degrades when missing.
+            try:
+                from streamlit_shortcuts import add_keyboard_shortcuts
+                add_keyboard_shortcuts({
+                    "a": "✅ Approve",
+                    "r": "❌ Reject",
+                })
+            except ImportError:
+                pass  # buttons still clickable, just no keyboard
+
             # Action buttons.
             ac, rc, _ = st.columns([1, 1, 4])
             if ac.button("✅ Approve", key=f"appr-{sel_item.path}"):

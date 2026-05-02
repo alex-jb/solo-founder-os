@@ -134,7 +134,13 @@ def render_wrapper(job: CronJob) -> str:
         '[ -f "$HOME/.zshrc" ] && . "$HOME/.zshrc"',
         "",
         f'mkdir -p "{LOG_DIR}"',
-        f'exec "{py}" -m {job.module} {args_str}'.rstrip(),
+        # `-W ignore::RuntimeWarning:runpy` suppresses the cosmetic
+        # warning Python emits when a `python -m foo.bar` invocation
+        # finds `foo.bar` already imported via foo.__init__.py. The
+        # filter is scoped to the runpy module so legitimate runtime
+        # warnings from agent code still surface in cron-logs/*.err.log.
+        f'exec "{py}" -W ignore::RuntimeWarning:runpy '
+        f'-m {job.module} {args_str}'.rstrip(),
         "",
     ]
     return "\n".join(body)
