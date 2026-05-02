@@ -18,9 +18,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from solo_founder_os.ui import (
     KNOWN_AGENT_DIRS,
+    PendingItem,
+    act_on_pending,
     main,
     scan_cron_logs,
     scan_evals,
+    scan_pending_items,
     scan_pending_queues,
     scan_proposals,
     scan_reflexions,
@@ -257,6 +260,67 @@ def test_stack_status_stale_for_two_weeks_ago(tmp_path):
 
 
 # ──────────────────────────── CLI ────────────────────────────
+
+
+# ──────────────────────────── scan_pending_items ────────────────────────────
+
+
+def test_scan_pending_items_returns_full_path_objects(tmp_path):
+    pdir = tmp_path / ".vc-outreach-agent" / "queue" / "pending"
+    pdir.mkdir(parents=True)
+    (pdir / "draft1.md").write_text("x")
+    (pdir / "draft2.md").write_text("y")
+    items = scan_pending_items(home=tmp_path)
+    assert all(isinstance(it, PendingItem) for it in items)
+    assert all(it.path.is_absolute() for it in items)
+    assert all(it.queue_root.name == "queue" for it in items)
+    # Newest-first by filename (timestamp prefix sorts)
+    assert items[0].filename >= items[-1].filename
+
+
+def test_scan_pending_items_handles_nested_marketing_layout(tmp_path):
+    pdir = tmp_path / ".orallexa-marketing-agent" / "queue" / "x" / "pending"
+    pdir.mkdir(parents=True)
+    (pdir / "post.md").write_text("x")
+    items = scan_pending_items(home=tmp_path)
+    assert len(items) == 1
+    # queue_root should be queue/x for the nested layout (one above pending/)
+    assert items[0].queue_root.name == "x"
+    assert items[0].queue_root.parent.name == "queue"
+
+
+# ──────────────────────────── act_on_pending ────────────────────────────
+
+
+def test_act_on_pending_approve_moves_to_approved(tmp_path):
+    pdir = tmp_path / ".vc-outreach-agent" / "queue" / "pending"
+    pdir.mkdir(parents=True)
+    pending_file = pdir / "draft.md"
+    pending_file.write_text("body")
+    item = scan_pending_items(home=tmp_path)[0]
+    new_path = act_on_pending(item, verdict="approved")
+    assert new_path.parent.name == "approved"
+    assert new_path.exists()
+    assert not pending_file.exists()
+
+
+def test_act_on_pending_reject_moves_to_rejected(tmp_path):
+    pdir = tmp_path / ".vc-outreach-agent" / "queue" / "pending"
+    pdir.mkdir(parents=True)
+    (pdir / "draft.md").write_text("body")
+    item = scan_pending_items(home=tmp_path)[0]
+    new_path = act_on_pending(item, verdict="rejected")
+    assert new_path.parent.name == "rejected"
+    assert new_path.exists()
+
+
+def test_act_on_pending_invalid_verdict_raises(tmp_path):
+    pdir = tmp_path / ".vc-outreach-agent" / "queue" / "pending"
+    pdir.mkdir(parents=True)
+    (pdir / "draft.md").write_text("body")
+    item = scan_pending_items(home=tmp_path)[0]
+    with pytest.raises(ValueError):
+        act_on_pending(item, verdict="snoozed")
 
 
 def test_main_returns_2_when_streamlit_missing(monkeypatch, capsys):

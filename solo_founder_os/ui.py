@@ -1,31 +1,32 @@
 """sfos-ui — local Streamlit dashboard for the 10-agent stack.
 
-The pain this fixes: with 10 agents writing logs, examples, eval
-reports, and HITL drafts to scattered ~/.dotdirs, the operator can't
-see who's working on what without manually grepping. sfos-retro
-generates a weekly digest but nothing surfaces the day-to-day.
+v2 (2026-05-02): research-driven 4-tab redesign.
 
-Architecture (local-first, no cloud):
-- Data loaders below are pure functions that read JSONL / JSON / MD
-  files in the user's home dir. Testable without Streamlit.
-- Rendering uses Streamlit. The optional [ui] extra installs it.
-- `sfos-ui` CLI spawns `streamlit run` on this same file so a single
-  module ships both the data layer and the UI.
+Research findings that shaped this:
+- Real solo founders (Pieter Levels, YC W26, "20+ agents" devs) spend
+  ~30 min/day on the stack across 2 batches — they read a morning
+  brief + clear an HITL inbox, NOT watch a real-time dashboard.
+- Agent sprawl is the #1 complaint of 2026 (96% have it, 12% have a
+  fix). The cure is ONE inbox across all agents, not N dashboards.
+- Streamlit `st.fragment(run_every=…)` gives "live feel" via 3-second
+  local-dir polling; WebSocket is overkill at SFOS volumes (5-15
+  HITL items/wk).
+- "Agent-to-agent chat" misrepresents SFOS: the agents communicate
+  via files, asynchronously. A vertical timeline of file-handoff
+  events captures the actual topology; chat bubbles would lie.
 
-Sections (v1):
-  1. Stack Status — last-activity badge per agent
-  2. Activity Timeline — chronological feed across the stack
-  3. Pending HITL — read-only count + filenames per agent (v1; the
-     approve / reject buttons are a v2 follow-up because each agent's
-     queue layout differs slightly)
-  4. Quality Trends — sfos-eval mean scores per skill
-  5. Cron Log Tail — last N lines of ~/.solo-founder-os/cron-logs/
+Tab layout (priority order):
+  🏠 Morning Brief — homepage; what happened overnight, what needs you,
+                      anomalies, cost. Driven by morning_brief.py.
+  📥 Inbox        — split-pane HITL: list left (grouped by agent),
+                      markdown right, [Approve][Reject] buttons →
+                      HitlQueue.move(). Auto-refresh via st.fragment.
+  🔀 Stack Flow   — vertical timeline of file events grouped by hour.
+                      Cross-agent reflexions/evals/proposals/HITL/bus.
+  📊 Status       — v1 sections (stack badges, history, quality trends,
+                      cron tail) folded under one tab.
 
-Why not Phoenix / Langfuse / LangSmith: those observe LLM CALLS
-(latency, tokens, prompts). This dashboard observes AGENT TASKS
-(what each agent did today, was it in queue, did it succeed).
-Different layer of abstraction; both are useful but this is the one
-the operator actually wants when they ask "what's running right now?".
+CLI is unchanged: `sfos-ui` spawns `streamlit run` on this same file.
 """
 from __future__ import annotations
 import argparse
@@ -36,6 +37,8 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
+
+from .hitl_queue import APPROVED, REJECTED, HitlQueue
 
 
 # Keep in sync with cross_agent_report.KNOWN_AGENT_DIRS.
@@ -60,15 +63,14 @@ KNOWN_AGENT_DIRS: list[str] = [
 class ActivityRow:
     ts: str
     agent: str
-    kind: str       # "reflexion" | "eval" | "proposal"
+    kind: str
     task: str
-    outcome: str    # for reflexion: SUCCESS/FAILED/PARTIAL; else ""
+    outcome: str
     summary: str
     source_path: str
 
 
 def _safe_load_jsonl(path: pathlib.Path, limit: int = 500) -> list[dict]:
-    """Tail-of-file scan, swallow malformed rows. Returns newest-last."""
     if not path.exists():
         return []
     try:
@@ -89,7 +91,6 @@ def _safe_load_jsonl(path: pathlib.Path, limit: int = 500) -> list[dict]:
 def scan_reflexions(
     *, home: Optional[pathlib.Path] = None, per_agent_limit: int = 100,
 ) -> list[ActivityRow]:
-    """Walk every known agent dir's reflections.jsonl. Newest-last."""
     home = home or pathlib.Path.home()
     rows: list[ActivityRow] = []
     for slug in KNOWN_AGENT_DIRS:
@@ -111,8 +112,6 @@ def scan_reflexions(
 def scan_evals(
     *, home: Optional[pathlib.Path] = None,
 ) -> list[dict]:
-    """Read every JSON in ~/.solo-founder-os/evals/. Returns each report
-    as-is (skill / ts / mean_overall etc) sorted oldest-first."""
     home = home or pathlib.Path.home()
     base = home / ".solo-founder-os" / "evals"
     if not base.exists():
@@ -129,8 +128,6 @@ def scan_evals(
 def scan_proposals(
     *, home: Optional[pathlib.Path] = None,
 ) -> list[dict]:
-    """Parse evolver-proposals/*.md frontmatter — { agent, task,
-    target_file, occurrences, generated_at, path }."""
     home = home or pathlib.Path.home()
     base = home / ".solo-founder-os" / "evolver-proposals"
     if not base.exists():
@@ -153,35 +150,60 @@ def scan_proposals(
     return out
 
 
-def scan_pending_queues(
+@dataclass(frozen=True)
+class PendingItem:
+    """One inbox row. `path` is absolute so HitlQueue.move can act on it."""
+    agent: str
+    filename: str
+    path: pathlib.Path
+    queue_root: pathlib.Path  # parent of pending/, for HitlQueue init
+
+
+def scan_pending_items(
     *, home: Optional[pathlib.Path] = None,
-) -> dict[str, list[str]]:
-    """For each agent, list pending HITL filenames. Walks both common
-    layouts: ~/.<agent>/queue/pending/*.md AND
-    ~/.<agent>/queue/pending/  (some older agents nest deeper)."""
+) -> list[PendingItem]:
+    """Return concrete PendingItem objects (with absolute paths) so the
+    UI can call HitlQueue.move on click. Newest-first."""
     home = home or pathlib.Path.home()
-    out: dict[str, list[str]] = {}
+    out: list[PendingItem] = []
     for slug in KNOWN_AGENT_DIRS:
         agent_root = home / slug
         if not agent_root.exists():
             continue
-        # Standard layout
+        # Standard + nested marketing layouts.
         pending_dirs = list(agent_root.glob("queue/pending"))
-        # Nested marketing-agent layout
         pending_dirs += list(agent_root.glob("queue/*/pending"))
-        files: list[str] = []
         for d in pending_dirs:
-            if d.is_dir():
-                files.extend(sorted(p.name for p in d.glob("*.md")))
-        if files:
-            out[slug] = files
+            if not d.is_dir():
+                continue
+            for p in sorted(d.glob("*.md")):
+                out.append(PendingItem(
+                    agent=slug,
+                    filename=p.name,
+                    path=p,
+                    queue_root=d.parent,  # one level above pending/
+                ))
+    out.sort(key=lambda x: x.filename, reverse=True)
+    return out
+
+
+def scan_pending_queues(
+    *, home: Optional[pathlib.Path] = None,
+) -> dict[str, list[str]]:
+    """Back-compat: kept so v1 tests + status tab keep working."""
+    items = scan_pending_items(home=home)
+    out: dict[str, list[str]] = {}
+    for it in items:
+        out.setdefault(it.agent, []).append(it.filename)
+    # Restore alpha order per agent (scan_pending_items returned newest-first).
+    for k in out:
+        out[k] = sorted(out[k])
     return out
 
 
 def scan_cron_logs(
     *, home: Optional[pathlib.Path] = None, tail_lines: int = 50,
 ) -> dict[str, list[str]]:
-    """Read the last N lines of every ~/.solo-founder-os/cron-logs/*.log."""
     home = home or pathlib.Path.home()
     base = home / ".solo-founder-os" / "cron-logs"
     if not base.exists():
@@ -200,8 +222,6 @@ def scan_cron_logs(
 def stack_status(
     *, home: Optional[pathlib.Path] = None,
 ) -> list[dict]:
-    """One row per agent with a freshness badge. Reads each agent's
-    reflections.jsonl mtime (or last-row ts if file is empty/recent)."""
     home = home or pathlib.Path.home()
     now = datetime.now(timezone.utc)
     out: list[dict] = []
@@ -242,7 +262,223 @@ def stack_status(
     return out
 
 
+# ──────────────────────────── HITL action ────────────────────────────
+
+
+def act_on_pending(item: PendingItem, *, verdict: str) -> pathlib.Path:
+    """Approve or reject a pending HITL item via HitlQueue.move.
+    Returns the new path. Raises ValueError on bad verdict."""
+    if verdict not in (APPROVED, REJECTED):
+        raise ValueError(f"verdict must be approved/rejected, got {verdict!r}")
+    q = HitlQueue(item.queue_root)
+    return q.move(item.path, to=verdict)
+
+
 # ──────────────────────────── Streamlit rendering ────────────────────────────
+
+
+def _render_morning_brief() -> None:
+    """Tab: 🏠 Morning Brief — research-driven homepage."""
+    import streamlit as st
+
+    from .morning_brief import assemble_brief
+
+    brief = assemble_brief(since_hours=24)
+
+    # Top-line metrics
+    col1, col2, col3 = st.columns(3)
+    col1.metric("HITL pending", brief.total_pending_hitl)
+    col2.metric("Anomalies", brief.total_anomalies)
+    col3.metric("Window", f"{brief.window_hours}h")
+
+    st.caption(f"Generated {brief.generated_at[:19].replace('T', ' ')} UTC")
+
+    # Sections
+    sev_emoji = {"info": "ℹ️", "warn": "🟡", "alert": "🔴"}
+    for section in brief.sections:
+        emoji = sev_emoji.get(section.severity, "ℹ️")
+        st.subheader(f"{emoji} {section.title}")
+        st.markdown(f"**{section.summary}**")
+        for b in section.bullets:
+            st.markdown(f"- {b}")
+
+
+def _render_inbox() -> None:
+    """Tab: 📥 Inbox — split-pane HITL with approve/reject buttons.
+
+    Polled every 3s via st.fragment so the list reflects new pending
+    items + post-action state without manual refresh.
+    """
+    import streamlit as st
+
+    @st.fragment(run_every=3)
+    def _inbox_body() -> None:
+        items = scan_pending_items()
+        if not items:
+            st.info("Inbox zero. Nothing pending across the stack.")
+            return
+
+        # Group by agent for the left list
+        by_agent: dict[str, list[PendingItem]] = {}
+        for it in items:
+            by_agent.setdefault(it.agent, []).append(it)
+
+        list_col, detail_col = st.columns([1, 2])
+
+        # Selection state — survives reruns within the fragment.
+        if "inbox_selected" not in st.session_state:
+            st.session_state.inbox_selected = items[0].path
+        sel_path = st.session_state.inbox_selected
+
+        # Left list — grouped by agent.
+        with list_col:
+            st.caption(f"{len(items)} pending across {len(by_agent)} agents")
+            for agent in sorted(by_agent):
+                with st.expander(f"{agent} ({len(by_agent[agent])})",
+                                   expanded=True):
+                    for it in by_agent[agent]:
+                        is_selected = (it.path == sel_path)
+                        label = ("👉 " if is_selected else "")  + it.filename
+                        if st.button(label, key=f"sel-{it.path}",
+                                       use_container_width=True):
+                            st.session_state.inbox_selected = it.path
+                            st.rerun()
+
+        # Right detail panel.
+        with detail_col:
+            sel_item = next((it for it in items if it.path == sel_path), None)
+            if sel_item is None:
+                # Selection was approved/rejected on a previous tick.
+                # Fall back to the first available item.
+                sel_item = items[0]
+                st.session_state.inbox_selected = sel_item.path
+
+            st.markdown(f"### `{sel_item.agent}` / {sel_item.filename}")
+
+            try:
+                content = sel_item.path.read_text(encoding="utf-8")
+            except OSError as e:
+                st.error(f"Could not read file: {e}")
+                content = ""
+
+            # Action buttons FIRST so they're above the fold.
+            ac, rc, _ = st.columns([1, 1, 4])
+            if ac.button("✅ Approve", key=f"appr-{sel_item.path}"):
+                try:
+                    new_path = act_on_pending(sel_item, verdict=APPROVED)
+                    st.success(f"Approved → {new_path.name}")
+                    # Clear selection so the fragment picks the next.
+                    st.session_state.pop("inbox_selected", None)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Move failed: {e}")
+            if rc.button("❌ Reject", key=f"rej-{sel_item.path}"):
+                try:
+                    new_path = act_on_pending(sel_item, verdict=REJECTED)
+                    st.warning(f"Rejected → {new_path.name}")
+                    st.session_state.pop("inbox_selected", None)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Move failed: {e}")
+
+            st.divider()
+            st.markdown(content)
+
+    _inbox_body()
+
+
+def _render_stack_flow() -> None:
+    """Tab: 🔀 Stack Flow — vertical timeline of cross-agent file events."""
+    import streamlit as st
+
+    from .stack_flow import assemble_timeline, group_by_hour
+
+    window = st.selectbox(
+        "Window", options=[24, 72, 168, 720], index=2,
+        format_func=lambda h: (
+            f"last {h}h" if h < 168 else (
+                "last 7 days" if h == 168 else "last 30 days"
+            )
+        ),
+    )
+    events = assemble_timeline(since_hours=window)
+    if not events:
+        st.info("No events in window. The stack is quiet — or hasn't run yet.")
+        return
+
+    grouped = group_by_hour(events)
+    kind_emoji = {"reflexion": "🔁", "eval": "📊", "proposal": "🔧",
+                    "hitl": "📥", "bus": "📡"}
+    sev_color = {"info": "ℹ️", "warn": "🟡", "alert": "🔴"}
+
+    for hour, evs in grouped.items():
+        with st.expander(f"{hour}  ({len(evs)} events)",
+                           expanded=(hour == next(iter(grouped)))):
+            for e in evs:
+                emoji = kind_emoji.get(e.kind, "•")
+                sev = sev_color.get(e.severity, "")
+                ts_short = e.ts[11:19] if len(e.ts) >= 19 else e.ts
+                st.markdown(
+                    f"`{ts_short}`  {emoji} {sev} **{e.agent}** · {e.summary}"
+                )
+
+
+def _render_status() -> None:
+    """Tab: 📊 Status — v1 sections folded together."""
+    import streamlit as st
+
+    st.subheader("Stack status")
+    rows = stack_status()
+    cols = st.columns(2)
+    for i, row in enumerate(rows):
+        col = cols[i % 2]
+        with col:
+            age = row["age_hours"]
+            if age is None:
+                detail = "no activity yet"
+            elif age < 1:
+                detail = f"{int(age * 60)} min ago · {row['n_recent_rows']} rows"
+            elif age < 48:
+                detail = f"{age:.1f}h ago · {row['n_recent_rows']} rows"
+            else:
+                detail = f"{age / 24:.1f}d ago · {row['n_recent_rows']} rows"
+            st.markdown(f"**{row['agent']}** — {row['badge']}  \n*{detail}*")
+
+    st.divider()
+
+    st.subheader("Quality trends (sfos-eval)")
+    evals = scan_evals()
+    if not evals:
+        st.info("No eval reports yet. First auto-run: Sunday 08:00.")
+    else:
+        by_skill: dict[str, list[dict]] = {}
+        for e in evals:
+            by_skill.setdefault(e.get("skill", "?"), []).append(e)
+        for skill, runs in sorted(by_skill.items()):
+            runs.sort(key=lambda r: r.get("ts", ""))
+            scores = [r.get("mean_overall", 0) for r in runs]
+            n = runs[-1].get("n_examples", 0)
+            last = runs[-1].get("mean_overall", 0)
+            trend = ""
+            if len(scores) >= 2:
+                delta = scores[-1] - scores[-2]
+                trend = f"  ({'+' if delta >= 0 else ''}{delta:.2f} vs prev)"
+            st.markdown(
+                f"**{skill}** — last mean **{last:.2f}** / 5 (n={n}){trend}"
+            )
+            if len(scores) >= 2:
+                st.line_chart(scores, height=80)
+
+    st.divider()
+
+    st.subheader("Cron log tail")
+    logs = scan_cron_logs(tail_lines=30)
+    if not logs:
+        st.info("No cron logs yet — first scheduled run Sunday 08:00.")
+    else:
+        for name, lines in logs.items():
+            with st.expander(f"{name}  ({len(lines)} lines)"):
+                st.code("\n".join(lines), language="text")
 
 
 def render_dashboard() -> None:
@@ -254,121 +490,33 @@ def render_dashboard() -> None:
         page_icon="🧰",
         layout="wide",
     )
+    st.title("Solo Founder OS — stack")
+    st.caption(
+        "Local dashboard. Reads JSONL/JSON/MD files in `~/`. "
+        "Auto-refresh on Inbox tab; other tabs use the rerun button."
+    )
 
-    st.title("Solo Founder OS — stack dashboard")
-    home_dir = pathlib.Path.home()
-    st.caption(f"Reading from `{home_dir}` · "
-                f"refreshed {datetime.now().strftime('%H:%M:%S')}")
+    tabs = st.tabs([
+        "🏠 Morning Brief",
+        "📥 Inbox",
+        "🔀 Stack Flow",
+        "📊 Status",
+    ])
 
-    refresh_col, _ = st.columns([1, 9])
-    if refresh_col.button("↻ Refresh"):
-        st.rerun()
-
-    # ── Section 1: stack status ──
-    st.header("① Stack status")
-    status_rows = stack_status()
-    cols = st.columns(2)
-    for i, row in enumerate(status_rows):
-        col = cols[i % 2]
-        with col:
-            label = row["badge"]
-            age = row["age_hours"]
-            if age is None:
-                detail = "no activity yet"
-            elif age < 1:
-                detail = f"{int(age * 60)} min ago · {row['n_recent_rows']} rows"
-            elif age < 48:
-                detail = f"{age:.1f}h ago · {row['n_recent_rows']} rows"
-            else:
-                detail = f"{age / 24:.1f}d ago · {row['n_recent_rows']} rows"
-            st.markdown(f"**{row['agent']}** — {label}  \n*{detail}*")
-
-    st.divider()
-
-    # ── Section 2: activity timeline ──
-    st.header("② Activity timeline")
-    refl = scan_reflexions(per_agent_limit=50)
-    if not refl:
-        st.info("No reflexion rows yet — agents will populate this as "
-                 "they run. The launchd cron jobs first fire Sunday 08:00.")
-    else:
-        # Newest first for timeline display.
-        refl_sorted = sorted(refl, key=lambda r: r.ts, reverse=True)[:80]
-        for r in refl_sorted:
-            color = {"SUCCESS": "🟢", "FAILED": "🔴",
-                       "PARTIAL": "🟡"}.get(r.outcome, "⚪")
-            ts_short = r.ts[:19].replace("T", " ") if r.ts else "?"
-            st.markdown(
-                f"`{ts_short}`  {color} **{r.agent}** · "
-                f"`{r.task}` — {r.summary}"
-            )
-
-    st.divider()
-
-    # ── Section 3: pending HITL ──
-    st.header("③ Pending HITL")
-    pending = scan_pending_queues()
-    if not pending:
-        st.info("No pending HITL items across the stack.")
-    else:
-        for agent, files in pending.items():
-            with st.expander(f"{agent} — {len(files)} pending"):
-                for f in files:
-                    st.code(f, language="text")
-                st.caption(
-                    f"Approve / reject by `mv` from "
-                    f"`~/{agent}/queue/pending/` to "
-                    f"`approved/` or `rejected/`. "
-                    f"Inline buttons coming in v2."
-                )
-
-    st.divider()
-
-    # ── Section 4: quality trends ──
-    st.header("④ Quality trends (sfos-eval)")
-    evals = scan_evals()
-    if not evals:
-        st.info("No eval reports yet. First auto-run: Sunday 08:00.")
-    else:
-        # Group by skill, sort by ts.
-        by_skill: dict[str, list[dict]] = {}
-        for e in evals:
-            by_skill.setdefault(e.get("skill", "?"), []).append(e)
-        for skill, runs in sorted(by_skill.items()):
-            runs.sort(key=lambda r: r.get("ts", ""))
-            scores = [r.get("mean_overall", 0) for r in runs]
-            n_examples = runs[-1].get("n_examples", 0)
-            last = runs[-1].get("mean_overall", 0)
-            trend = ""
-            if len(scores) >= 2:
-                delta = scores[-1] - scores[-2]
-                trend = f"  ({'+' if delta >= 0 else ''}{delta:.2f} vs prev)"
-            st.markdown(
-                f"**{skill}** — last mean **{last:.2f}** / 5 "
-                f"(n={n_examples}){trend}"
-            )
-            if len(scores) >= 2:
-                st.line_chart(scores, height=80)
-
-    st.divider()
-
-    # ── Section 5: cron tail ──
-    st.header("⑤ Cron log tail")
-    logs = scan_cron_logs(tail_lines=30)
-    if not logs:
-        st.info("No cron logs yet — first scheduled run Sunday 08:00.")
-    else:
-        for name, lines in logs.items():
-            with st.expander(f"{name}  ({len(lines)} lines)"):
-                st.code("\n".join(lines), language="text")
+    with tabs[0]:
+        _render_morning_brief()
+    with tabs[1]:
+        _render_inbox()
+    with tabs[2]:
+        _render_stack_flow()
+    with tabs[3]:
+        _render_status()
 
 
 # ──────────────────────────── CLI ────────────────────────────
 
 
 def _under_streamlit() -> bool:
-    """Detect whether this module is being executed inside a
-    `streamlit run` subprocess."""
     try:
         from streamlit.runtime.scriptrunner import get_script_run_ctx
         return get_script_run_ctx() is not None
@@ -406,9 +554,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     return subprocess.call(cmd)
 
 
-# When `streamlit run solo_founder_os/ui.py` runs, this module is
-# imported and executed top-to-bottom; the guard ensures we render
-# only inside that subprocess (not when imported by tests / CLI).
 if _under_streamlit():
     render_dashboard()
 
