@@ -45,22 +45,34 @@ def _stub_launchctl(monkeypatch, *, returncode: int = 0,
 # ───────────────── shape ─────────────────
 
 
-def test_jobs_contain_three_canonical_entries():
+def test_jobs_contain_canonical_entries():
+    """Sunday cron schedule must include all 4 layers in the loop."""
     labels = {j.label for j in JOBS}
     assert "com.alexji.sfos.eval" in labels
+    assert "com.alexji.sfos.council" in labels
     assert "com.alexji.sfos.evolver" in labels
     assert "com.alexji.sfos.retro" in labels
     assert all(j.weekday == 0 for j in JOBS), "all jobs must run Sunday"
 
 
 def test_jobs_run_in_dependency_order():
-    """eval must precede evolver must precede retro: each downstream job
-    needs the upstream's data to be fresh that morning."""
+    """eval (L6) → council (L5) → evolver (L4) → retro: each downstream
+    job needs the upstream's data to be fresh that morning. eval writes
+    drift signals; council reads them; evolver reads BOTH drift +
+    council notes; retro digests everything."""
     by_label = {j.label: (j.hour, j.minute) for j in JOBS}
     eval_t = by_label["com.alexji.sfos.eval"]
+    council_t = by_label["com.alexji.sfos.council"]
     evol_t = by_label["com.alexji.sfos.evolver"]
     retro_t = by_label["com.alexji.sfos.retro"]
-    assert eval_t < evol_t < retro_t
+    assert eval_t < council_t < evol_t < retro_t
+
+
+def test_council_job_passes_auto_from_drift_flag():
+    """The L5 council cron job must invoke --auto-from-drift; without
+    that flag the council does nothing (just a usage error from the CLI)."""
+    council = next(j for j in JOBS if j.label == "com.alexji.sfos.council")
+    assert "--auto-from-drift" in council.extra_args
 
 
 # ───────────────── render_wrapper ─────────────────

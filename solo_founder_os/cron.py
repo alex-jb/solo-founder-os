@@ -67,6 +67,15 @@ JOBS: list[CronJob] = [
                     "persist mean/p10/p50 per skill.",
     ),
     CronJob(
+        label="com.alexji.sfos.council",
+        module="solo_founder_os.council",
+        weekday=0, hour=8, minute=30,
+        description="L5 — convene a BUG_TRIAGE council per skill whose "
+                    "mean dropped > 0.7 in last week's eval (severe drift "
+                    "only; routine drift goes straight to L4).",
+        extra_args=("--auto-from-drift",),
+    ),
+    CronJob(
         label="com.alexji.sfos.evolver",
         module="solo_founder_os.evolver",
         weekday=0, hour=9, minute=0,
