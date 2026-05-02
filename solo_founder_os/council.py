@@ -328,6 +328,89 @@ def hold_meeting(
     )
 
 
+# ── L6 → L5 trigger: drift-driven councils ─────────────────────
+
+
+def convene_drift_council(
+    skill: str,
+    drift: dict,
+    *,
+    client: Optional[AnthropicClient] = None,
+    members: Optional[list[CouncilMember]] = None,
+) -> CouncilOutput:
+    """Convene a BUG_TRIAGE council on a specific eval-drift signal.
+
+    `drift` is the dict returned by sfos-eval.detect_drift:
+        {skill, previous_mean, current_mean, delta, reports_compared}
+
+    Why this exists: L6 sfos-eval surfaces drift (skill quality
+    dropped > threshold). L4 evolver consumes it and asks Haiku for
+    a one-shot fix. But severe drift (e.g. 4.5 → 2.0) deserves a
+    multi-perspective deliberation BEFORE the patch is synthesized.
+    This is the L5 layer's first production job.
+
+    Topic + question are auto-derived so the operator can fire this
+    without composing a prompt:
+        topic    = "drift on <skill>"
+        question = "Skill <skill> mean dropped from X.XX to Y.YY
+                    (delta -Z.ZZ). What's the likely root cause and
+                    what should we change in the prompt or rubric?"
+    """
+    members = members or BUG_TRIAGE_COUNCIL
+    topic = f"drift on {skill}"
+    prev = drift.get("previous_mean")
+    curr = drift.get("current_mean")
+    delta = drift.get("delta")
+    question = (
+        f"Skill `{skill}` quality dropped from {prev} to {curr} "
+        f"(delta {delta:+.2f}). What's the likely root cause and "
+        "what should we change in the prompt, rubric, or input "
+        "schema before we ask the evolver to synthesize a patch?"
+    )
+    return hold_meeting(topic, question, members=members, client=client)
+
+
+def auto_convene_from_drift(
+    *,
+    threshold: float = 0.7,
+    home: Optional[pathlib.Path] = None,
+    client: Optional[AnthropicClient] = None,
+    write: bool = True,
+) -> list[tuple[str, CouncilOutput, Optional[pathlib.Path]]]:
+    """Walk every skill with eval data, fire a council for each whose
+    mean dropped > threshold across the last two reports.
+
+    Default threshold (0.7) is intentionally stricter than the L4
+    evolver default (0.5) — councils are expensive (5-7 Haiku calls
+    per meeting) and we only want to spend that cost on severe drops
+    where multiple perspectives genuinely beat a one-shot patch.
+
+    Returns list of (skill, output, written_path|None).
+    """
+    from .eval import (
+        detect_drift,
+        list_skills_with_examples,
+    )
+
+    home = home or pathlib.Path.home()
+    sfos_base = home / ".solo-founder-os"
+    out: list[tuple[str, CouncilOutput, Optional[pathlib.Path]]] = []
+    for skill in list_skills_with_examples(base=sfos_base):
+        drift = detect_drift(
+            skill,
+            base=sfos_base / "evals",
+            threshold=threshold,
+        )
+        if not drift:
+            continue
+        result = convene_drift_council(skill, drift, client=client)
+        path: Optional[pathlib.Path] = None
+        if write:
+            path = write_meeting(result)
+        out.append((skill, result, path))
+    return out
+
+
 # ── Persistence ─────────────────────────────────────────────────
 
 
@@ -397,20 +480,54 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     p = argparse.ArgumentParser(
         prog="sfos-council",
-        description="Hold a multi-agent meeting; write markdown notes.",
+        description="Hold a multi-agent meeting; write markdown notes. "
+                     "Supports auto-mode driven by L6 drift signals.",
     )
-    p.add_argument("topic", help="Meeting topic (short).")
-    p.add_argument("question",
-                    help="Specific question for the council to answer.")
+    p.add_argument("topic", nargs="?", default=None,
+                    help="Meeting topic (omit when --auto-from-drift).")
+    p.add_argument("question", nargs="?", default=None,
+                    help="Specific question (omit when --auto-from-drift).")
     p.add_argument("--council", choices=sorted(COUNCIL_REGISTRY.keys()),
                     default="launch-readiness",
-                    help="Predefined council (default: launch-readiness).")
+                    help="Predefined council (default: launch-readiness). "
+                         "Ignored in --auto-from-drift mode (uses bug-triage).")
     p.add_argument("--dry-run", action="store_true",
                     help="Print to stdout, don't write file.")
+    p.add_argument("--auto-from-drift", action="store_true",
+                    help="L5↔L6 trigger: scan ~/.solo-founder-os/evals/, "
+                         "convene a bug-triage council for every skill "
+                         "whose mean dropped > --drift-threshold across "
+                         "the last two reports.")
+    p.add_argument("--drift-threshold", type=float, default=0.7,
+                    help="Drift magnitude required to fire a council "
+                         "(default 0.7 — stricter than the L4 evolver's "
+                         "0.5 because councils cost ~5-7 Haiku calls each).")
     args = p.parse_args(argv)
 
     if os.getenv("COUNCIL_SKIP") == "1":
         return 0
+
+    if args.auto_from_drift:
+        results = auto_convene_from_drift(
+            threshold=args.drift_threshold,
+            write=not args.dry_run,
+        )
+        if not results:
+            print(
+                "No drift signals exceeded threshold "
+                f"{args.drift_threshold} — no council convened.",
+                file=sys.stderr,
+            )
+            return 0
+        for skill, out, path in results:
+            tag = f"({path.name})" if path else "(dry-run)"
+            print(f"  ✓ {skill} {tag}", file=sys.stderr)
+            if args.dry_run:
+                print(render_meeting_md(out))
+        return 0
+
+    if not args.topic or not args.question:
+        p.error("topic and question are required unless --auto-from-drift")
 
     members = COUNCIL_REGISTRY[args.council]
     out = hold_meeting(args.topic, args.question, members=members)

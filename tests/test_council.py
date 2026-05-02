@@ -15,6 +15,8 @@ from solo_founder_os.council import (
     CouncilOutput,
     LAUNCH_READINESS_COUNCIL,
     PRICING_DECISION_COUNCIL,
+    auto_convene_from_drift,
+    convene_drift_council,
     hold_meeting,
     main,
     render_meeting_md,
@@ -262,3 +264,150 @@ def test_main_writes_file_when_not_dry_run(monkeypatch, tmp_path, capsys):
     files = list((tmp_path / ".solo-founder-os" / "council-meetings")
                   .glob("*.md"))
     assert len(files) == 1
+
+
+# ── L5↔L6 drift triggers ─────────────────────────────────────
+
+
+def _plant_drift_evals(home: pathlib.Path, skill: str,
+                          prev_mean: float, curr_mean: float) -> None:
+    """Plant the example file + 2 eval reports for `skill` so detect_drift
+    can see them. Mirrors the pattern in test_evolver._plant_eval_pair."""
+    import json
+    examples_dir = home / ".solo-founder-os" / "examples"
+    examples_dir.mkdir(parents=True, exist_ok=True)
+    (examples_dir / f"{skill}.jsonl").write_text(
+        json.dumps({"ts": "2026-05-01T00:00:00+00:00",
+                     "inputs": {}, "output": "x", "note": ""}) + "\n",
+        encoding="utf-8",
+    )
+    evals_dir = home / ".solo-founder-os" / "evals"
+    evals_dir.mkdir(parents=True, exist_ok=True)
+    base_report = {
+        "skill": skill, "n_examples": 5, "scores": [],
+        "p50_overall": 0.0, "p10_overall": 0.0, "rubric": "",
+    }
+    older = {**base_report, "ts": "2026-05-01T00:00:00+00:00",
+              "mean_overall": prev_mean, "p50_overall": prev_mean,
+              "p10_overall": prev_mean}
+    newer = {**base_report, "ts": "2026-05-02T00:00:00+00:00",
+              "mean_overall": curr_mean, "p50_overall": curr_mean,
+              "p10_overall": curr_mean}
+    (evals_dir / f"2026-05-01-0900-{skill}.json").write_text(json.dumps(older))
+    (evals_dir / f"2026-05-02-0900-{skill}.json").write_text(json.dumps(newer))
+
+
+def test_convene_drift_council_returns_synthesized_output():
+    """convene_drift_council should pass the drift dict through into a
+    well-formed CouncilOutput with topic + question derived from drift."""
+    fake = _fake_client(texts_per_call=["p1", "p2", "p3", "synthesis"])
+    drift = {
+        "skill": "draft-vc-email",
+        "previous_mean": 4.5,
+        "current_mean": 2.1,
+        "delta": -2.4,
+        "reports_compared": ["t1", "t2"],
+    }
+    out = convene_drift_council("draft-vc-email", drift, client=fake)
+    assert "draft-vc-email" in out.topic
+    assert "4.5" in out.question
+    assert "2.1" in out.question
+    assert "-2.40" in out.question
+    assert out.synthesis == "synthesis"
+
+
+def test_auto_convene_from_drift_skips_below_threshold(tmp_path, monkeypatch):
+    """A drift of 0.3 should NOT fire a council when threshold=0.7."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-x")
+    _plant_drift_evals(tmp_path, "draft-x",
+                          prev_mean=4.0, curr_mean=3.7)  # delta -0.3
+    import solo_founder_os.council as cm
+    monkeypatch.setattr(
+        cm, "AnthropicClient",
+        lambda **kw: _fake_client(texts_per_call=[
+            "p1", "p2", "p3", "synth"]))
+    monkeypatch.setattr(cm, "COUNCIL_DIR",
+                         tmp_path / ".solo-founder-os" / "council-meetings")
+    out = auto_convene_from_drift(threshold=0.7)
+    assert out == []
+
+
+def test_auto_convene_from_drift_fires_on_severe_drop(tmp_path, monkeypatch):
+    """A drift of 2.5 (4.5 → 2.0) SHOULD fire and write a meeting file."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-x")
+    _plant_drift_evals(tmp_path, "draft-vc-email",
+                          prev_mean=4.5, curr_mean=2.0)  # delta -2.5
+    import solo_founder_os.council as cm
+    monkeypatch.setattr(
+        cm, "AnthropicClient",
+        lambda **kw: _fake_client(texts_per_call=[
+            "p1", "p2", "p3", "synth"]))
+    monkeypatch.setattr(cm, "COUNCIL_DIR",
+                         tmp_path / ".solo-founder-os" / "council-meetings")
+    results = auto_convene_from_drift(threshold=0.7)
+    assert len(results) == 1
+    skill, meeting, path = results[0]
+    assert skill == "draft-vc-email"
+    assert meeting.synthesis == "synth"
+    assert path is not None and path.exists()
+    assert path.suffix == ".md"
+
+
+def test_auto_convene_dry_run_skips_write(tmp_path, monkeypatch):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-x")
+    _plant_drift_evals(tmp_path, "draft-x",
+                          prev_mean=4.5, curr_mean=2.0)
+    import solo_founder_os.council as cm
+    monkeypatch.setattr(
+        cm, "AnthropicClient",
+        lambda **kw: _fake_client(texts_per_call=[
+            "p1", "p2", "p3", "synth"]))
+    results = auto_convene_from_drift(threshold=0.7, write=False)
+    assert len(results) == 1
+    _, _, path = results[0]
+    assert path is None
+
+
+def test_main_auto_from_drift_with_no_drift_exits_clean(
+    monkeypatch, tmp_path, capsys,
+):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("COUNCIL_SKIP", raising=False)
+    rc = main(["--auto-from-drift"])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "No drift signals" in err
+
+
+def test_main_auto_from_drift_writes_meeting(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-x")
+    monkeypatch.delenv("COUNCIL_SKIP", raising=False)
+    _plant_drift_evals(tmp_path, "draft-x", prev_mean=4.5, curr_mean=2.0)
+    import solo_founder_os.council as cm
+    monkeypatch.setattr(
+        cm, "AnthropicClient",
+        lambda **kw: _fake_client(texts_per_call=[
+            "p1", "p2", "p3", "synth"]))
+    monkeypatch.setattr(cm, "COUNCIL_DIR",
+                         tmp_path / ".solo-founder-os" / "council-meetings")
+    rc = main(["--auto-from-drift"])
+    assert rc == 0
+    files = list((tmp_path / ".solo-founder-os" / "council-meetings")
+                  .glob("*.md"))
+    assert len(files) == 1
+
+
+def test_main_topic_required_when_not_auto_mode(
+    monkeypatch, tmp_path, capsys,
+):
+    """Without --auto-from-drift, missing topic + question is a usage
+    error, not a silent no-op."""
+    monkeypatch.setattr(pathlib.Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("COUNCIL_SKIP", raising=False)
+    import pytest
+    with pytest.raises(SystemExit):
+        main([])
