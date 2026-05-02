@@ -61,6 +61,8 @@ DEFAULT_AGENT_REPOS: list[tuple[str, str]] = [
     (".cost-audit-agent", "Desktop/cost-audit-agent"),
     (".bilingual-content-sync-agent", "Desktop/bilingual-content-sync-agent"),
     (".orallexa-marketing-agent", "Desktop/orallexa-marketing-agent"),
+    (".customer-support-agent", "Desktop/customer-support-agent"),
+    (".customer-outreach-agent", "Desktop/customer-outreach-agent"),
 ]
 
 
