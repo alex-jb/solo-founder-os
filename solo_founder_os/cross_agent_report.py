@@ -49,6 +49,7 @@ KNOWN_AGENT_DIRS: list[str] = [
     ".bilingual-content-sync-agent",
     ".customer-support-agent",
     ".customer-outreach-agent",
+    ".payments-agent",
 ]
 
 SHARED_SKILLS_DIR = pathlib.Path.home() / ".solo-founder-os" / "skills"

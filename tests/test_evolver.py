@@ -368,14 +368,17 @@ def test_main_with_patterns_writes_artifacts(monkeypatch, tmp_path, capsys):
 
 
 def test_default_agent_repos_registry():
-    """Sanity: registry has all 9 agent slugs (the full stack as of v0.20)."""
-    assert len(DEFAULT_AGENT_REPOS) == 9
+    """Sanity: registry has all 10 task agents (the full stack as of v0.26).
+    The shared lib (.solo-founder-os) is NOT in this registry — it's not
+    a Desktop repo with a drafter to evolve."""
+    assert len(DEFAULT_AGENT_REPOS) == 10
     slugs = [a for a, _ in DEFAULT_AGENT_REPOS]
     assert ".vc-outreach-agent" in slugs
     assert ".funnel-analytics-agent" in slugs
     # New agents must be reachable by the evolver loop or they're invisible
     assert ".customer-support-agent" in slugs
     assert ".customer-outreach-agent" in slugs
+    assert ".payments-agent" in slugs
 
 
 # ── L4↔L6 wire-up: find_drift_patterns ─────────────────────────

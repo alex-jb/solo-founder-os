@@ -63,6 +63,7 @@ DEFAULT_AGENT_REPOS: list[tuple[str, str]] = [
     (".orallexa-marketing-agent", "Desktop/orallexa-marketing-agent"),
     (".customer-support-agent", "Desktop/customer-support-agent"),
     (".customer-outreach-agent", "Desktop/customer-outreach-agent"),
+    (".payments-agent", "Desktop/payments-agent"),
 ]
 
 
