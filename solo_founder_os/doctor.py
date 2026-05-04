@@ -191,6 +191,12 @@ def check_agent(spec: dict) -> AgentReport:
 def check_stack_wide() -> list[CheckResult]:
     """Cross-cutting checks not bound to one agent."""
     out: list[CheckResult] = []
+
+    # Sterile-env import check — catches the v0.26.2 production cron
+    # bug where solo-founder-os "worked in dev" because shell CWD was
+    # in the repo, but launchd's neutral CWD couldn't import it.
+    out.append(_check_sterile_import())
+
     notifiers = {
         "ntfy": os.getenv("NTFY_TOPIC"),
         "telegram": (os.getenv("TELEGRAM_BOT_TOKEN")
@@ -210,6 +216,41 @@ def check_stack_wide() -> list[CheckResult]:
             "Set NTFY_TOPIC for the simplest path.",
             severity="warn"))
     return out
+
+
+def _check_sterile_import() -> CheckResult:
+    """Run `python -c 'import solo_founder_os'` from a sterile CWD
+    (one that has no `solo_founder_os/` subdir). If it fails, the
+    package isn't pip-installed and any launchd / cron / sudo /
+    cross-machine invocation will silently break with ModuleNotFoundError.
+
+    The fix is always: `pip install --user -e <path-to-repo>` (editable
+    if you want dev-tree changes to apply) or `pip install solo-founder-os`
+    once PyPI publish is configured.
+    """
+    import subprocess
+    name = "solo_founder_os importable from neutral CWD"
+    try:
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "import solo_founder_os; print(solo_founder_os.__version__)"],
+            cwd="/",  # /  has no solo_founder_os/ subdir to shadow site-packages
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception as e:
+        return CheckResult(name, False, f"sub-import failed: {e}",
+                              severity="alert")
+    if r.returncode == 0:
+        ver = r.stdout.strip()
+        return CheckResult(name, True, f"v{ver} resolves cleanly")
+    err = (r.stderr or r.stdout or "").strip().splitlines()[-1:]
+    return CheckResult(
+        name, False,
+        f"package not pip-installed — launchd cron WILL fail. "
+        f"Fix: `pip install --user -e ~/Desktop/solo-founder-os`. "
+        f"Last error: {err[0] if err else '(empty)'}",
+        severity="alert",
+    )
 
 
 def render_text(reports: list[AgentReport],

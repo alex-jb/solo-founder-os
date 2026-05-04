@@ -80,7 +80,9 @@ def test_render_text_all_green(monkeypatch):
     import subprocess
     def fake_run(*args, **kwargs):
         class R:
+            returncode = 0
             stdout = "com.alex.funnel-analytics.brief"
+            stderr = ""
         return R()
     monkeypatch.setattr(subprocess, "run", fake_run)
     reports = [doctor.check_agent(spec) for spec in doctor.AGENT_CHECKS]
@@ -110,7 +112,9 @@ def test_render_json_machine_readable(monkeypatch):
     import subprocess
     def fake_run(*args, **kwargs):
         class R:
+            returncode = 0
             stdout = "com.alex.funnel-analytics.brief"
+            stderr = ""
         return R()
     monkeypatch.setattr(subprocess, "run", fake_run)
     reports = [doctor.check_agent(spec) for spec in doctor.AGENT_CHECKS]
@@ -174,7 +178,9 @@ def test_main_notify_calls_fan_out(monkeypatch, capsys):
     import subprocess
     def fake_run(*a, **kw):
         class R:
+            returncode = 0
             stdout = "com.alex.funnel-analytics.brief"
+            stderr = ""
         return R()
     monkeypatch.setattr(subprocess, "run", fake_run)
 
