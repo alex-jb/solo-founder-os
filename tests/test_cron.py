@@ -110,6 +110,20 @@ def test_render_wrapper_suppresses_runpy_warning():
     assert "-W ignore::RuntimeWarning:runpy" in body
 
 
+def test_render_wrapper_cd_to_home_before_python():
+    """Regression for the 2026-05-04 production bug: launchd inherited
+    CWD from the directory where the plist was first loaded (the
+    solo-founder-os repo). When Python ran `-m solo_founder_os.eval`,
+    sys.path picked up the dev-tree's `solo_founder_os/` AHEAD of the
+    pip-installed package, causing partial-import failures.
+    Wrapper must `cd $HOME` first so CWD is always neutral."""
+    body = render_wrapper(JOBS[0])
+    cd_pos = body.find('cd "$HOME"')
+    exec_pos = body.find("exec ")
+    assert cd_pos >= 0, "wrapper must cd to $HOME"
+    assert cd_pos < exec_pos, "cd must come BEFORE exec"
+
+
 # ───────────────── write_job_files ─────────────────
 
 
