@@ -35,7 +35,7 @@ Five things no other agent platform does together:
 pip install 'solo-founder-os[anthropic,ui]'
 
 # Schedule the weekly self-improvement loop on launchd:
-sfos-cron install
+sfos-cron install   # pre-flight will refuse if SFOS isn't pip-installed
 # Sun 08:00  sfos-eval         judge skills with Sonnet
 # Sun 08:30  sfos-council      multi-perspective on severe drift
 # Sun 09:00  sfos-evolver      Haiku synthesizes PR proposals
@@ -51,6 +51,36 @@ sfos-sync push
 ```
 
 That's it. No accounts. No cloud. Cost ceiling $0.06/week.
+
+## Production install (from source)
+
+Until PyPI Trusted Publishing is configured per repo, install editable
+from your local clone:
+
+```bash
+git clone https://github.com/alex-jb/solo-founder-os.git ~/Desktop/solo-founder-os
+cd ~/Desktop/solo-founder-os
+pip install --user -e '.[anthropic,ui]'
+```
+
+`pip install -e` matters: launchd's neutral CWD won't see a dev tree
+otherwise. `sfos-cron install` runs a sterile-import pre-flight that
+refuses to write plists when this hasn't been done. Pass
+`--ensure-pip-install` to make it auto-fix:
+
+```bash
+sfos-cron install --ensure-pip-install
+```
+
+If your stack agents' console scripts (e.g. `payments-agent`,
+`vc-outreach-agent`) don't appear on PATH after install, the binaries
+landed in `~/Library/Python/<version>/bin/` which most shells don't
+include. Easiest fix:
+
+```bash
+ln -s ~/Library/Python/3.9/bin/payments-agent ~/.local/bin/
+# (repeat per agent, or symlink the whole dir)
+```
 
 ## The 6-layer self-improving loop
 

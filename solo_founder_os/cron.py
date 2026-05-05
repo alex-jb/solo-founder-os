@@ -244,6 +244,33 @@ def is_loaded(job: CronJob) -> bool:
     return rc == 0
 
 
+def _find_repo_root() -> Optional[pathlib.Path]:
+    """Walk up from this module's __file__ until we hit pyproject.toml.
+    That dir is the SFOS repo root and is what `pip install -e` needs.
+    Returns None if no pyproject.toml is found (e.g. the package is
+    pip-installed normal-mode and there's no source tree)."""
+    p = pathlib.Path(__file__).resolve()
+    for parent in [p, *p.parents]:
+        if (parent / "pyproject.toml").exists():
+            return parent
+    return None
+
+
+def _pip_install_editable(path: pathlib.Path) -> tuple[int, str]:
+    """Run `pip install --user -e <path>` and return (rc, output)."""
+    try:
+        r = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--user", "-e",
+             str(path)],
+            capture_output=True, text=True, timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        return (124, "pip install timed out after 120s")
+    except Exception as e:
+        return (1, f"pip install crashed: {e}")
+    return (r.returncode, (r.stdout + r.stderr).strip())
+
+
 def _preflight_sterile_import() -> tuple[bool, str]:
     """Return (ok, hint).
 
@@ -332,6 +359,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_install.add_argument("--skip-preflight", action="store_true",
                             help="Skip the sterile-import check (useful "
                                  "for testing the install path itself).")
+    p_install.add_argument("--ensure-pip-install", action="store_true",
+                            help="When pre-flight fails, auto-run "
+                                 "`pip install --user -e <repo>` on the "
+                                 "directory containing solo_founder_os/ "
+                                 "and re-check before installing plists.")
     sub.add_parser("uninstall",
                     help="Unload + remove all SFOS launchd plists.")
     sub.add_parser("status",
@@ -353,12 +385,28 @@ def main(argv: Optional[list[str]] = None) -> int:
         # — which is exactly the v0.26.2 production bug we just fixed.
         if not args.skip_preflight:
             ok, hint = _preflight_sterile_import()
+            if not ok and args.ensure_pip_install:
+                # Auto-fix path: pip install --user -e on the dev tree
+                # that contains THIS module. Then re-check.
+                repo_root = _find_repo_root()
+                if repo_root:
+                    print(f"  pre-flight failed — auto-installing "
+                          f"{repo_root} (--ensure-pip-install)…",
+                          file=sys.stderr)
+                    rc, out = _pip_install_editable(repo_root)
+                    if rc == 0:
+                        print("  pip install ✓ — re-checking…",
+                              file=sys.stderr)
+                        ok, hint = _preflight_sterile_import()
+                    else:
+                        print(f"  pip install FAILED:\n{out}", file=sys.stderr)
             if not ok:
                 print("✗ pre-flight FAILED — refusing to install plists.\n",
                       file=sys.stderr)
                 print(hint, file=sys.stderr)
                 print("\nRe-run with --skip-preflight to install anyway "
-                      "(plists will be present but cron will fail).",
+                      "(plists will be present but cron will fail), "
+                      "or --ensure-pip-install to auto-`pip install -e`.",
                       file=sys.stderr)
                 return 2
 

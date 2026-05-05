@@ -167,6 +167,67 @@ def test_main_install_aborts_when_preflight_fails(monkeypatch, tmp_path,
     assert not plist.exists()
 
 
+def test_find_repo_root_locates_pyproject():
+    """Walks up from the cron module until it finds pyproject.toml."""
+    from solo_founder_os.cron import _find_repo_root
+    root = _find_repo_root()
+    assert root is not None
+    assert (root / "pyproject.toml").exists()
+    # Should be the SFOS repo root, not some random parent
+    assert (root / "solo_founder_os").is_dir()
+
+
+def test_main_install_ensure_pip_install_auto_fixes(monkeypatch, tmp_path,
+                                                         capsys):
+    """When pre-flight fails and --ensure-pip-install is passed, the
+    CLI auto-runs `pip install -e <repo>` and re-checks."""
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    import solo_founder_os.cron as cron
+
+    # First preflight fails, second passes (after pip install)
+    state = {"calls": 0}
+    def fake_preflight():
+        state["calls"] += 1
+        if state["calls"] == 1:
+            return (False, "fake initial-fail hint")
+        return (True, "")
+    monkeypatch.setattr(cron, "_preflight_sterile_import", fake_preflight)
+
+    pip_calls: list = []
+    def fake_pip(path):
+        pip_calls.append(path)
+        return (0, "Successfully installed solo-founder-os-0.27.0")
+    monkeypatch.setattr(cron, "_pip_install_editable", fake_pip)
+
+    _stub_launchctl(monkeypatch)
+    rc = main(["install", "--no-load", "--ensure-pip-install"])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "auto-installing" in err
+    assert "pip install ✓" in err
+    assert len(pip_calls) == 1
+    assert state["calls"] == 2  # pre-fail + post-install re-check
+
+
+def test_main_install_ensure_pip_install_pip_failure_aborts(
+    monkeypatch, tmp_path, capsys,
+):
+    """If pip install itself fails, the CLI must still abort with
+    rc=2 and surface the pip stderr — never silently install broken
+    plists."""
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    import solo_founder_os.cron as cron
+    monkeypatch.setattr(cron, "_preflight_sterile_import",
+                          lambda: (False, "preflight hint"))
+    monkeypatch.setattr(cron, "_pip_install_editable",
+                          lambda path: (1, "ERROR: pip exploded"))
+    rc = main(["install", "--no-load", "--ensure-pip-install"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "pip install FAILED" in err
+    assert "pip exploded" in err
+
+
 def test_main_install_skip_preflight_bypasses_check(monkeypatch, tmp_path):
     """--skip-preflight is the escape hatch for testing the install
     path itself (or repairing a half-broken install)."""
