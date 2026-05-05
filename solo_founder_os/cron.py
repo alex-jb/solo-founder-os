@@ -244,6 +244,41 @@ def is_loaded(job: CronJob) -> bool:
     return rc == 0
 
 
+def _preflight_sterile_import() -> tuple[bool, str]:
+    """Return (ok, hint).
+
+    Runs `python -c "import solo_founder_os"` from cwd=/ — exactly the
+    sterile import test that exposed the v0.26.2 launchd cron bug. If
+    the package can't import from a neutral CWD, the cron jobs we're
+    about to write will fail every Sunday.
+
+    Returns (True, "") on success; (False, install hint) on failure.
+    """
+    try:
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "import solo_founder_os; print(solo_founder_os.__version__)"],
+            cwd="/",
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception as e:
+        return False, f"sub-import crashed: {e}"
+    if r.returncode == 0:
+        return True, ""
+    err_tail = (r.stderr or r.stdout or "").strip().splitlines()[-3:]
+    hint = (
+        "  solo_founder_os is NOT pip-installed. The launchd cron jobs\n"
+        "  would fail every Sunday with ModuleNotFoundError.\n"
+        "\n"
+        "  Fix from the repo root:\n"
+        "      pip install --user -e .\n"
+        "\n"
+        "  (sterile-import error tail:\n  "
+        + "\n  ".join(err_tail) + ")"
+    )
+    return False, hint
+
+
 # ───────────────── CLI ─────────────────
 
 
@@ -294,6 +329,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_install.add_argument("--linux", action="store_true",
                             help="Emit a crontab block instead "
                                  "(use on non-darwin).")
+    p_install.add_argument("--skip-preflight", action="store_true",
+                            help="Skip the sterile-import check (useful "
+                                 "for testing the install path itself).")
     sub.add_parser("uninstall",
                     help="Unload + remove all SFOS launchd plists.")
     sub.add_parser("status",
@@ -308,6 +346,22 @@ def main(argv: Optional[list[str]] = None) -> int:
         if args.plan:
             _print_plan(JOBS)
             return 0
+
+        # Pre-flight: refuse to install if solo-founder-os isn't
+        # sterile-importable. Otherwise the plists land but every
+        # Sunday wake-up fires a ModuleNotFoundError into the void
+        # — which is exactly the v0.26.2 production bug we just fixed.
+        if not args.skip_preflight:
+            ok, hint = _preflight_sterile_import()
+            if not ok:
+                print("✗ pre-flight FAILED — refusing to install plists.\n",
+                      file=sys.stderr)
+                print(hint, file=sys.stderr)
+                print("\nRe-run with --skip-preflight to install anyway "
+                      "(plists will be present but cron will fail).",
+                      file=sys.stderr)
+                return 2
+
         load = not args.no_load
         for job in JOBS:
             info = install_one(job, load=load)

@@ -110,6 +110,76 @@ def test_render_wrapper_suppresses_runpy_warning():
     assert "-W ignore::RuntimeWarning:runpy" in body
 
 
+def test_preflight_sterile_import_ok_when_installed(monkeypatch):
+    """When the package is importable from cwd=/, preflight returns ok."""
+    from solo_founder_os.cron import _preflight_sterile_import
+    fake_calls = []
+    def fake_run(*args, **kwargs):
+        fake_calls.append((args, kwargs))
+        class R:
+            returncode = 0
+            stdout = "0.26.4\n"
+            stderr = ""
+        return R()
+    monkeypatch.setattr("subprocess.run", fake_run)
+    ok, hint = _preflight_sterile_import()
+    assert ok is True
+    assert hint == ""
+    # Must run with cwd=/
+    assert fake_calls[0][1].get("cwd") == "/"
+
+
+def test_preflight_sterile_import_fail_returns_install_hint(monkeypatch):
+    """When the package isn't importable, hint must include the
+    pip install -e fix verbatim so the operator can copy-paste."""
+    from solo_founder_os.cron import _preflight_sterile_import
+    def fake_run(*args, **kwargs):
+        class R:
+            returncode = 1
+            stdout = ""
+            stderr = "ModuleNotFoundError: No module named 'solo_founder_os'"
+        return R()
+    monkeypatch.setattr("subprocess.run", fake_run)
+    ok, hint = _preflight_sterile_import()
+    assert ok is False
+    assert "pip install --user -e ." in hint
+    assert "ModuleNotFoundError" in hint
+
+
+def test_main_install_aborts_when_preflight_fails(monkeypatch, tmp_path,
+                                                       capsys):
+    """sfos-cron install should refuse to write plists if SFOS isn't
+    pip-installed — the whole point is to prevent the v0.26.2 bug
+    class on a fresh machine."""
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    import solo_founder_os.cron as cron
+    monkeypatch.setattr(cron, "_preflight_sterile_import",
+                          lambda: (False, "  fake install hint"))
+    rc = main(["install", "--no-load"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "pre-flight FAILED" in err
+    assert "fake install hint" in err
+    # Refused → no plists written
+    plist = pathlib.Path.home() / "Library" / "LaunchAgents" / \
+        "com.alexji.sfos.eval.plist"
+    # (using monkeypatched home, but we didn't set Library/LaunchAgents)
+    assert not plist.exists()
+
+
+def test_main_install_skip_preflight_bypasses_check(monkeypatch, tmp_path):
+    """--skip-preflight is the escape hatch for testing the install
+    path itself (or repairing a half-broken install)."""
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    import solo_founder_os.cron as cron
+    # Make preflight fail but pass --skip-preflight
+    monkeypatch.setattr(cron, "_preflight_sterile_import",
+                          lambda: (False, "shouldn't be called"))
+    _stub_launchctl(monkeypatch)
+    rc = main(["install", "--no-load", "--skip-preflight"])
+    assert rc == 0
+
+
 def test_render_wrapper_cd_to_home_before_python():
     """Regression for the 2026-05-04 production bug: launchd inherited
     CWD from the directory where the plist was first loaded (the
