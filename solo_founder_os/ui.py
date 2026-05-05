@@ -412,127 +412,120 @@ def _render_morning_brief() -> None:
 def _render_inbox() -> None:
     """Tab: 📥 Inbox — split-pane HITL with approve/reject buttons.
 
-    Polled every 3s via st.fragment so the list reflects new pending
-    items + post-action state without manual refresh.
+    v0.27.4: dropped `@st.fragment(run_every=3)` and the
+    streamlit-shortcuts keyboard binding. Both were interfering with
+    button click event delivery in Streamlit 1.50 — Approve clicks
+    silently no-op'd on the operator's machine. The fragment also
+    re-injected the JS keydown handler every 3 seconds, stacking
+    listeners. Plain top-down rendering is more reliable and the
+    reload story is fine: Streamlit reruns on any widget interaction
+    + a manual ↻ Refresh button covers passive cases.
     """
     import streamlit as st
 
-    @st.fragment(run_every=3)
-    def _inbox_body() -> None:
-        items = scan_pending_items()
-        if not items:
-            st.info("Inbox zero. Nothing pending across the stack.")
-            return
+    # Manual refresh: cheaper than polling and doesn't fight click events.
+    if st.button("↻ Refresh", key="inbox-refresh"):
+        st.rerun()
 
-        # Group by agent for the left list
-        by_agent: dict[str, list[PendingItem]] = {}
-        for it in items:
-            by_agent.setdefault(it.agent, []).append(it)
+    items = scan_pending_items()
+    if not items:
+        st.info("Inbox zero. Nothing pending across the stack.")
+        return
 
-        list_col, detail_col = st.columns([1, 2])
+    # Group by agent for the left list
+    by_agent: dict[str, list[PendingItem]] = {}
+    for it in items:
+        by_agent.setdefault(it.agent, []).append(it)
 
-        # Selection state — survives reruns within the fragment.
-        if "inbox_selected" not in st.session_state:
-            st.session_state.inbox_selected = items[0].path
-        sel_path = st.session_state.inbox_selected
+    list_col, detail_col = st.columns([1, 2])
 
-        # Left list — grouped by agent.
-        with list_col:
-            st.caption(f"{len(items)} pending across {len(by_agent)} agents")
-            for agent in sorted(by_agent):
-                with st.expander(f"{agent} ({len(by_agent[agent])})",
-                                   expanded=True):
-                    for it in by_agent[agent]:
-                        is_selected = (it.path == sel_path)
-                        label = ("👉 " if is_selected else "")  + it.filename
-                        if st.button(label, key=f"sel-{it.path}",
-                                       use_container_width=True):
-                            st.session_state.inbox_selected = it.path
-                            st.rerun()
+    # Selection state survives reruns.
+    if "inbox_selected" not in st.session_state:
+        st.session_state.inbox_selected = items[0].path
+    sel_path = st.session_state.inbox_selected
 
-        # Right detail panel.
-        with detail_col:
-            sel_item = next((it for it in items if it.path == sel_path), None)
-            if sel_item is None:
-                # Selection was approved/rejected on a previous tick.
-                # Fall back to the first available item.
-                sel_item = items[0]
-                st.session_state.inbox_selected = sel_item.path
+    # Left list — grouped by agent.
+    with list_col:
+        st.caption(f"{len(items)} pending across {len(by_agent)} agents")
+        for agent in sorted(by_agent):
+            with st.expander(f"{agent} ({len(by_agent[agent])})",
+                               expanded=True):
+                for it in by_agent[agent]:
+                    is_selected = (it.path == sel_path)
+                    label = ("👉 " if is_selected else "")  + it.filename
+                    if st.button(label, key=f"sel-{it.path}",
+                                   use_container_width=True):
+                        st.session_state.inbox_selected = it.path
+                        st.rerun()
 
-            st.markdown(f"### `{sel_item.agent}` / {sel_item.filename}")
+    # Right detail panel.
+    with detail_col:
+        sel_item = next((it for it in items if it.path == sel_path), None)
+        if sel_item is None:
+            # Selection was approved/rejected on a previous tick.
+            # Fall back to the first available item.
+            sel_item = items[0]
+            st.session_state.inbox_selected = sel_item.path
 
+        st.markdown(f"### `{sel_item.agent}` / {sel_item.filename}")
+
+        try:
+            original_text = sel_item.path.read_text(encoding="utf-8")
+        except OSError as e:
+            st.error(f"Could not read file: {e}")
+            original_text = ""
+
+        # Editable buffer. Edits before approval are how ICPL
+        # learns Alex's voice — the (original_body, edited_body)
+        # diff feeds preference_preamble on the next draft.
+        edit_key = f"edit-{sel_item.path}"
+        edited_text = st.text_area(
+            "Markdown (edit before approving — diff feeds ICPL)",
+            value=original_text,
+            key=edit_key,
+            height=400,
+        )
+
+        # Action buttons.
+        ac, rc, _ = st.columns([1, 1, 4])
+        if ac.button("✅ Approve", key=f"appr-{sel_item.path}"):
             try:
-                original_text = sel_item.path.read_text(encoding="utf-8")
-            except OSError as e:
-                st.error(f"Could not read file: {e}")
-                original_text = ""
-
-            # Editable buffer. Edits before approval are how ICPL
-            # learns Alex's voice — the (original_body, edited_body)
-            # diff feeds preference_preamble on the next draft.
-            edit_key = f"edit-{sel_item.path}"
-            edited_text = st.text_area(
-                "Markdown (edit before approving — diff feeds ICPL)",
-                value=original_text,
-                key=edit_key,
-                height=400,
-            )
-
-            # Keyboard shortcuts: A = approve, R = reject. These bind
-            # the literal button labels below — streamlit-shortcuts
-            # injects a JS keydown handler that clicks the matching
-            # button. Optional dep, gracefully degrades when missing.
-            try:
-                from streamlit_shortcuts import add_keyboard_shortcuts
-                add_keyboard_shortcuts({
-                    "a": "✅ Approve",
-                    "r": "❌ Reject",
-                })
-            except ImportError:
-                pass  # buttons still clickable, just no keyboard
-
-            # Action buttons.
-            ac, rc, _ = st.columns([1, 1, 4])
-            if ac.button("✅ Approve", key=f"appr-{sel_item.path}"):
-                try:
-                    new_path, was_edited = approve_with_edit(
-                        sel_item,
-                        edited_text=edited_text,
-                        original_text=original_text,
+                new_path, was_edited = approve_with_edit(
+                    sel_item,
+                    edited_text=edited_text,
+                    original_text=original_text,
+                )
+                if was_edited:
+                    st.success(
+                        f"Approved (with edits) → {new_path.name}"
                     )
-                    if was_edited:
-                        st.success(
-                            f"Approved (with edits) → {new_path.name}"
-                        )
-                        st.caption(
-                            "ICPL pair logged — future drafts of this "
-                            "(agent, task) get your edit as a few-shot "
-                            "exemplar."
-                        )
-                    else:
-                        st.success(f"Approved → {new_path.name}")
-                    st.session_state.pop("inbox_selected", None)
-                    st.session_state.pop(edit_key, None)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Move failed: {e}")
-            if rc.button("❌ Reject", key=f"rej-{sel_item.path}"):
-                try:
-                    new_path = act_on_pending(sel_item, verdict=REJECTED)
-                    st.warning(f"Rejected → {new_path.name}")
-                    st.session_state.pop("inbox_selected", None)
-                    st.session_state.pop(edit_key, None)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Move failed: {e}")
+                    st.caption(
+                        "ICPL pair logged — future drafts of this "
+                        "(agent, task) get your edit as a few-shot "
+                        "exemplar."
+                    )
+                else:
+                    st.success(f"Approved → {new_path.name}")
+                st.session_state.pop("inbox_selected", None)
+                st.session_state.pop(edit_key, None)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Move failed: {e}")
+        if rc.button("❌ Reject", key=f"rej-{sel_item.path}"):
+            try:
+                new_path = act_on_pending(sel_item, verdict=REJECTED)
+                st.warning(f"Rejected → {new_path.name}")
+                st.session_state.pop("inbox_selected", None)
+                st.session_state.pop(edit_key, None)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Move failed: {e}")
 
-            # Read-only preview below the editor — useful when the
-            # markdown contains code blocks or lists that don't render
-            # well as raw text.
-            with st.expander("Rendered preview"):
-                st.markdown(edited_text)
-
-    _inbox_body()
+        # Read-only preview below the editor — useful when the
+        # markdown contains code blocks or lists that don't render
+        # well as raw text.
+        with st.expander("Rendered preview"):
+            st.markdown(edited_text)
 
 
 def _render_stack_flow() -> None:
