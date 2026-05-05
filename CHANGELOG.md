@@ -3,6 +3,49 @@
 All notable changes to `solo-founder-os` from v0.10 onward. Each entry
 is one or two sentences; the commit messages are the source of truth.
 
+## v0.27.1 — 2026-05-04
+
+Docs: SFOS-specific CONTRIBUTING.md and SECURITY.md (replacing the
+agent-templated stubs). CHANGELOG catch-up to v0.27.0. No code change.
+
+## v0.27.0 — 2026-05-04
+
+`sfos-cron install --ensure-pip-install` auto-runs `pip install --user
+-e <repo-root>` when pre-flight detects the package isn't sterile-
+importable. Closes the operator-friction loop on top of the v0.26.2-4
+post-mortem trilogy. README rewritten EN+zh with a Production Install
+section explaining the from-source path, the `~/Library/Python/<v>/bin`
+PATH gotcha, and the `--ensure-pip-install` shortcut.
+
+## v0.26.4 — 2026-05-04
+
+`sfos-cron install` pre-flight refuses to write plists when
+solo-founder-os isn't sterile-importable. Prevents the v0.26.2 bug
+class from being shipped on a fresh machine. `--skip-preflight` is the
+escape hatch.
+
+## v0.26.3 — 2026-05-04
+
+`sfos-doctor` adds sterile-import regression check: runs `python -c
+"import solo_founder_os"` from cwd=/. Catches the entire
+CWD-shadowing bug class going forward.
+
+## v0.26.2 — 2026-05-04
+
+CRITICAL fix: first Sunday production cron fired May 3 19:01 (catch-up
+from a missed schedule) and ALL 4 jobs failed with `ModuleNotFoundError:
+solo_founder_os.source` because launchd's neutral CWD couldn't import
+the dev-tree-only package. Wrapper now `cd "$HOME"` first; operator
+must `pip install --user -e .` for the package to be globally
+importable. Also unloaded a stale parallel-session
+`com.alexji.sfos-weekly-retro` plist (different label, dash not dot).
+
+## v0.26.1 — 2026-05-02
+
+Register `.payments-agent` in `KNOWN_AGENT_DIRS` and
+`DEFAULT_AGENT_REPOS` so the new agent is visible to retro and evolver.
+Adds CHANGELOG.md spanning the v0.10 → v0.26.1 arc.
+
 ## v0.26.0 — 2026-05-02
 
 `sfos-sync` for multi-machine git-based sync of `~/.solo-founder-os/`. Per-agent
