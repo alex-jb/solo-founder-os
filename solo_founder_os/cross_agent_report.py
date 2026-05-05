@@ -40,7 +40,8 @@ from typing import Optional
 # sync. Ordered: solo-founder-os' own dotdir + each agent's home dir.
 KNOWN_AGENT_DIRS: list[str] = [
     ".solo-founder-os",
-    ".orallexa-marketing-agent",
+    ".orallexa-marketing-agent",   # reflexion / examples mirror
+    ".marketing_agent",            # actual queue + history.db (legacy name)
     ".build-quality-agent",
     ".customer-discovery-agent",
     ".funnel-analytics-agent",

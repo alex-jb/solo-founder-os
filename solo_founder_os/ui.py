@@ -66,7 +66,8 @@ from solo_founder_os.preference import log_edit
 # Keep in sync with cross_agent_report.KNOWN_AGENT_DIRS.
 KNOWN_AGENT_DIRS: list[str] = [
     ".solo-founder-os",
-    ".orallexa-marketing-agent",
+    ".orallexa-marketing-agent",   # reflexion / examples mirror
+    ".marketing_agent",            # actual queue + history.db (legacy name)
     ".build-quality-agent",
     ".customer-discovery-agent",
     ".funnel-analytics-agent",
@@ -75,6 +76,7 @@ KNOWN_AGENT_DIRS: list[str] = [
     ".bilingual-content-sync-agent",
     ".customer-support-agent",
     ".customer-outreach-agent",
+    ".payments-agent",
 ]
 
 
