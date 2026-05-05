@@ -29,17 +29,38 @@ Tab layout (priority order):
 CLI is unchanged: `sfos-ui` spawns `streamlit run` on this same file.
 """
 from __future__ import annotations
+
+# CRITICAL: Streamlit `streamlit run ui.py` AND plain `python ui.py`
+# both put the script's own directory on sys.path[0]. That dir IS the
+# package dir (solo_founder_os/), which contains http.py — shadowing
+# the stdlib `http` package and breaking `import urllib.request` and
+# everything downstream with "No module named 'http.client'".
+# Strip it BEFORE any other import.
+import sys
+import os
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE in sys.path:
+    sys.path.remove(_HERE)
+del _HERE
+
 import argparse
 import json
 import pathlib
 import subprocess
-import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from .hitl_queue import APPROVED, REJECTED, HitlQueue, parse_frontmatter
-from .preference import log_edit
+# NOTE: absolute imports, NOT `from .hitl_queue import …`. Streamlit
+# runs this file as a top-level script (`streamlit run ui.py`), so the
+# module has no parent package context and relative imports raise
+# ImportError. Absolute imports work in BOTH `streamlit run` AND
+# `python -m solo_founder_os.ui` because the package is pip-installed
+# (sfos-cron's pre-flight enforces that).
+from solo_founder_os.hitl_queue import (
+    APPROVED, REJECTED, HitlQueue, parse_frontmatter,
+)
+from solo_founder_os.preference import log_edit
 
 
 # Keep in sync with cross_agent_report.KNOWN_AGENT_DIRS.
@@ -364,7 +385,7 @@ def _render_morning_brief() -> None:
     """Tab: 🏠 Morning Brief — research-driven homepage."""
     import streamlit as st
 
-    from .morning_brief import assemble_brief
+    from solo_founder_os.morning_brief import assemble_brief
 
     brief = assemble_brief(since_hours=24)
 
@@ -516,7 +537,9 @@ def _render_stack_flow() -> None:
     """Tab: 🔀 Stack Flow — vertical timeline of cross-agent file events."""
     import streamlit as st
 
-    from .stack_flow import assemble_timeline, group_by_hour
+    from solo_founder_os.stack_flow import (
+        assemble_timeline, group_by_hour,
+    )
 
     window = st.selectbox(
         "Window", options=[24, 72, 168, 720], index=2,

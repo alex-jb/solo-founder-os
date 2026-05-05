@@ -278,14 +278,17 @@ def _cost_summary(home: pathlib.Path) -> Optional[BriefSection]:
     delta = last_total - prior_total
     sign = "+" if delta >= 0 else ""
     severity = "warn" if delta > 1.0 else "info"
+    # Escape `$` as `\$` so Streamlit's markdown renderer doesn't
+    # interpret `$...$` as inline LaTeX (which makes the dollar amounts
+    # render as italic math).
     bullets = [
-        f"This week: ${last_total:.3f}",
-        f"Prior week: ${prior_total:.3f}",
-        f"Δ: {sign}${delta:.3f}",
+        f"This week: \\${last_total:.3f}",
+        f"Prior week: \\${prior_total:.3f}",
+        f"Δ: {sign}\\${delta:.3f}",
     ]
     return BriefSection(
         title="Anthropic cost (last 7d)",
-        summary=f"${last_total:.2f} this week vs ${prior_total:.2f} prior.",
+        summary=f"\\${last_total:.2f} this week vs \\${prior_total:.2f} prior.",
         bullets=bullets,
         severity=severity,
     )
