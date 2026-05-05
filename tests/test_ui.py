@@ -474,6 +474,47 @@ def test_approve_with_edit_test_mode_skips_pref_log(tmp_path, monkeypatch):
                   / "preference-pairs.jsonl").exists()
 
 
+def test_ui_module_imports_cleanly_as_script(tmp_path):
+    """Regression for v0.27.2 (the dashboard didn't open).
+
+    Streamlit runs ui.py via `streamlit run`, which executes the file
+    as __main__ with __package__=None — no parent package context.
+    The module's TOP-LEVEL imports must succeed under that condition.
+
+    Two bugs sat dormant from v0.21.0 → v0.27.2:
+      (a) `from .hitl_queue import …` fails with ImportError because
+          relative imports require a parent package.
+      (b) The script's own dir (solo_founder_os/) lands on sys.path[0],
+          shadowing stdlib `http` package via solo_founder_os/http.py
+          and breaking `import urllib.request`.
+
+    This test runs `python <abs path to ui.py>` from a sterile CWD
+    and asserts the import chain completes without traceback. If
+    this fails, the dashboard is broken — no shipping.
+    """
+    import subprocess
+    import sys as _sys
+    ui_path = (pathlib.Path(__file__).resolve().parent.parent
+                / "solo_founder_os" / "ui.py")
+    # Run with --help so the CLI exits cleanly after parsing args (the
+    # imports happen before argparse, so --help is enough to exercise
+    # the entire top-level import chain).
+    r = subprocess.run(
+        [_sys.executable, str(ui_path), "--help"],
+        cwd=str(tmp_path),
+        capture_output=True, text=True, timeout=15,
+    )
+    # rc 0 (--help exits 0) AND no ImportError or ModuleNotFoundError
+    # in stderr.
+    assert r.returncode == 0, (
+        f"ui.py crashed when run as a script:\n"
+        f"stdout:\n{r.stdout}\n"
+        f"stderr:\n{r.stderr}"
+    )
+    assert "ImportError" not in r.stderr
+    assert "ModuleNotFoundError" not in r.stderr
+
+
 def test_main_returns_2_when_streamlit_missing(monkeypatch, capsys):
     """Without streamlit installed, main should print install hint and
     return 2 — never crash with ImportError."""
