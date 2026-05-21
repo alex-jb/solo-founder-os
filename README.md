@@ -36,6 +36,17 @@ Five things no other agent platform does together:
 5. **Solo-founder framing.** "What needs you today" inbox, not enterprise
    team/project hierarchy.
 
+## What SFOS is *not* (so you can pick the right tool)
+
+The agent-tooling space is crowded — here's where SFOS sits and where it doesn't.
+
+- **Not an agent framework.** If you're building a custom multi-agent workflow from scratch, use [OpenRath](https://github.com/Rath-Team/OpenRath) (PyTorch-style Session/Workflow primitives), [LangGraph](https://github.com/langchain-ai/langgraph), or [CrewAI](https://github.com/joaomdmoura/crewAI). SFOS is the *application* layer — a fixed 11-agent stack you install and run, not primitives you compose into your own runtime. You could build SFOS-on-OpenRath; we just don't, because cron + JSONL files solve our use case without the abstraction tax.
+- **Not a hosted SaaS.** [Cofounder 2](https://www.cofounder.co) and similar take your prompts through their billing layer, store state on their cloud, and (so far) ship English-only. SFOS is the opposite shape: your API key calls Anthropic directly, your `~/.<agent>/` state lives on your laptop, and Chinese-language docs + prompts are first-class.
+- **Not for teams.** No project/seat/role model. The CLI assumes one human approving the HITL queue. Multi-person workflows would need a different governance surface than `sfos-inbox`.
+- **Not real-time.** Agents wake on Sunday-morning cron and process queued work in batches. If you want sub-second response-loop agents, use a chat-style runtime, not SFOS.
+
+If those constraints fit a one-person company shipping at a sustainable pace, read on.
+
 ## Quick start
 
 ```bash

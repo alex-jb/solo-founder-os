@@ -31,6 +31,17 @@ Solo Founder OS 是支撑[完整 11 agent 一人公司栈](#7-层栈11-个-agent
    避开"告警疲劳"反模式。
 5. **一人公司视角。** "今天有什么需要我"收件箱,不是企业级 team/project 层级。
 
+## SFOS *不是*什么(避免选错工具)
+
+Agent 工具空间已经很拥挤了 —— 说清楚 SFOS 在哪一层、不在哪一层。
+
+- **不是 agent framework**。如果你要从头 build 自定义多 agent workflow,用 [OpenRath](https://github.com/Rath-Team/OpenRath)(PyTorch 风格的 Session/Workflow primitive)、[LangGraph](https://github.com/langchain-ai/langgraph) 或 [CrewAI](https://github.com/joaomdmoura/crewAI)。SFOS 是 *application* 层 —— 一个固定 11-agent 栈,你装上就跑,不是给你 compose 用的 primitive。理论上可以 build SFOS-on-OpenRath,我们只是没做,因为 cron + JSONL 文件已经够用,不需要再加抽象层。
+- **不是 hosted SaaS**。[Cofounder 2](https://www.cofounder.co) 和类似产品把你的 prompt 走他们的账单层,状态存他们的云,(目前)只支持英文。SFOS 反着做:你的 API key 直接调 Anthropic,你的 `~/.<agent>/` 状态在你硬盘上,中文 docs + prompt 是一等公民。
+- **不是给团队的**。没有 project / seat / role 模型。CLI 假定一个人审批 HITL 队列。多人 workflow 需要不一样的 governance surface,`sfos-inbox` 装不下。
+- **不是 real-time**。Agent 在周日早上 cron 醒,批量处理排队的工作。如果你要 sub-second response-loop agent,用 chat-style runtime,别用 SFOS。
+
+如果这些约束适合一个 sustainable 节奏的一人公司,继续往下读。
+
 ## 快速开始
 
 ```bash
