@@ -2,8 +2,15 @@
 
 **English** | [中文](README.zh-CN.md)
 
-> The 6-layer self-evolving agent stack a one-person company actually runs.
-> Local-first. Zero cloud infra. Sub-$0.06/week autonomous spend.
+> **Run your one-person company on YOUR keys, in YOUR language, on YOUR machine.**
+> Open-source alternative to closed SaaS agent platforms.
+> 6-layer self-evolving stack. Local-first. Zero cloud infra. Sub-$0.06/week autonomous spend.
+
+**Why this exists.** Cofounder 2, Devin, Lindy, and the next 10 SaaS agent
+platforms route your API calls through their billing layer, store your data
+in their cloud, and ship English-only. SFOS does the opposite: your keys,
+your disk, your language. 11 Python packages you `pip install` and `import`
+— or just one if you only want `marketing-agent`. No platform middleman.
 
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/solo-founder-os.svg)](https://pypi.org/project/solo-founder-os/)

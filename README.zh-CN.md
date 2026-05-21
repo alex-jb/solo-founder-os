@@ -2,8 +2,14 @@
 
 [English](README.md) | **中文**
 
-> 一人公司真正用得起来的 6 层自演化 agent 栈。
-> 本地优先,零云基础设施,自主开销 < $0.06/周。
+> **用你自己的 key、你自己的语言、你自己的机器,跑你的一人公司。**
+> 开源替代 Cofounder 2 / Devin / Lindy 等闭源 SaaS agent 平台。
+> 6 层自演化栈。本地优先,零云基础设施,自主开销 < $0.06/周。
+
+**为什么有这个项目。** Cofounder 2 / Devin / Lindy 这一批 SaaS agent
+平台把你的 API 调用走它们的账单层、数据存它们的云、只支持英文。SFOS
+反着做:**你的 key、你的硬盘、你的语言**。11 个 Python 包 `pip install` 就用
+— 或者只装你需要的那 1 个(比如只要 `marketing-agent`)。没有平台中间商。
 
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/solo-founder-os.svg)](https://pypi.org/project/solo-founder-os/)
