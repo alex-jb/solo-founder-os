@@ -16,6 +16,43 @@ your disk, your language. 11 Python packages you `pip install` and `import`
 [![PyPI](https://img.shields.io/pypi/v/solo-founder-os.svg)](https://pypi.org/project/solo-founder-os/)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](#)
 
+## The 11-agent stack at a glance
+
+```
+                    ┌──────────────────────────────────────┐
+                    │   solo-founder-os (shared library)   │
+                    │   eval · council · evolver · retro   │
+                    └────────────────┬─────────────────────┘
+                                     │
+       ┌──────────────────┬──────────┴───────────┬──────────────────┐
+       ▼                  ▼                      ▼                  ▼
+  ┌─────────┐       ┌─────────┐            ┌─────────┐        ┌─────────┐
+  │ marketing│      │customer- │           │  funnel- │       │  cost-  │
+  │  agent  │       │discovery │           │analytics │       │  audit  │
+  └─────────┘       └─────────┘            └─────────┘        └─────────┘
+   distribute        find pain               watch                spend
+                                             funnel              guardrail
+
+       ┌──────────────────┬──────────────────────┬──────────────────┐
+       ▼                  ▼                      ▼                  ▼
+  ┌─────────┐       ┌─────────┐            ┌─────────┐        ┌─────────┐
+  │   vc-   │       │customer-│            │payments │        │bilingual│
+  │outreach │       │ support │            │  agent  │        │content- │
+  └─────────┘       └─────────┘            └─────────┘        │  sync   │
+   raise & sell     reply & triage         collect $          └─────────┘
+                                                              EN ↔ 中文
+
+       ┌──────────────────┐
+       ▼                  ▼
+  ┌─────────┐       ┌─────────┐
+  │ build-  │       │ vibex-  │
+  │ quality │       │publish  │
+  └─────────┘       └─────────┘
+   pre-push gate    HITL post to 抖音/小红书/B站
+```
+
+**7 canonical layers** — one agent per canonical solo-founder job: distribute, discover, watch, spend, raise/sell, support, collect, translate, ship-safely, publish. Each runs as its own PyPI package; install only what you need.
+
 ## What it does
 
 Solo Founder OS is the shared library + CLI suite that runs the
