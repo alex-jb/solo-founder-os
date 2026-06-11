@@ -38,16 +38,8 @@ from .anthropic_client import AnthropicClient, DEFAULT_HAIKU_MODEL
 
 
 # Default agent home directories (relative to user $HOME) that the
-# supervisor inspects. Add new agents here when they ship.
-DEFAULT_AGENT_DIRS = [
-    ".build-quality-agent",
-    ".customer-discovery-agent",
-    ".funnel-analytics-agent",
-    ".vc-outreach-agent",
-    ".cost-audit-agent",
-    ".bilingual-content-sync-agent",
-    ".orallexa-marketing-agent",
-]
+# supervisor inspects. Source of truth: solo_founder_os.agents_registry.
+from .agents_registry import KNOWN_AGENT_DIRS as DEFAULT_AGENT_DIRS  # noqa: E402,F401
 
 PROPOSALS_DIR = (pathlib.Path.home() / ".solo-founder-os"
                  / "proposed-tasks" / "pending")

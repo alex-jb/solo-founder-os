@@ -202,8 +202,21 @@ def test_find_patterns_sorted_by_count(tmp_path):
 # ── synthesize_proposal: safety + Haiku I/O ─────────────────
 
 
+def _default_diff(target: str) -> str:
+    """A minimal but real unified diff against `target`. The synthesize
+    proposal safety gate parses `+++` headers — diffs without them get
+    rejected (correctly, since `git apply` needs them too)."""
+    return (
+        f"--- a/{target}\n"
+        f"+++ b/{target}\n"
+        "@@ -1 +1,2 @@\n"
+        " existing\n"
+        "+ new line\n"
+    )
+
+
 def _fake_client(*, configured: bool = True, target: str = "vc_outreach_agent/drafter.py",
-                  diff: str = "+ new line\n",
+                  diff: str | None = None,
                   rationale: str = "fix the recurring rate-limit issue",
                   test_case: str = "",
                   err: str | None = None):
@@ -215,7 +228,7 @@ def _fake_client(*, configured: bool = True, target: str = "vc_outreach_agent/dr
         c.messages_create_json.return_value = ({
             "target_file": target,
             "rationale": rationale,
-            "diff": diff,
+            "diff": _default_diff(target) if diff is None else diff,
             "test_case": test_case,
         }, None)
     return c
@@ -352,7 +365,13 @@ def test_main_with_patterns_writes_artifacts(monkeypatch, tmp_path, capsys):
             return ({
                 "target_file": "vc_outreach_agent/drafter.py",
                 "rationale": "add backoff",
-                "diff": "+ retries=3\n",
+                "diff": (
+                    "--- a/vc_outreach_agent/drafter.py\n"
+                    "+++ b/vc_outreach_agent/drafter.py\n"
+                    "@@ -1 +1,2 @@\n"
+                    " existing\n"
+                    "+ retries=3\n"
+                ),
                 "test_case": "",
             }, None)
     monkeypatch.setattr(ev, "AnthropicClient",
@@ -488,7 +507,13 @@ def test_main_picks_up_drift_patterns(monkeypatch, tmp_path, capsys):
             return ({
                 "target_file": "vc_outreach_agent/drafter.py",
                 "rationale": "tighten voice spec",
-                "diff": "+ # drift fix\n",
+                "diff": (
+                    "--- a/vc_outreach_agent/drafter.py\n"
+                    "+++ b/vc_outreach_agent/drafter.py\n"
+                    "@@ -1 +1,2 @@\n"
+                    " existing\n"
+                    "+ # drift fix\n"
+                ),
                 "test_case": "",
             }, None)
     monkeypatch.setattr(ev, "AnthropicClient", lambda **kw: FakeClient())
@@ -610,7 +635,13 @@ def test_synthesize_proposal_injects_council_synthesis_into_prompt(
             return ({
                 "target_file": "vc_outreach_agent/drafter.py",
                 "rationale": "ok",
-                "diff": "+ change\n",
+                "diff": (
+                    "--- a/vc_outreach_agent/drafter.py\n"
+                    "+++ b/vc_outreach_agent/drafter.py\n"
+                    "@@ -1 +1,2 @@\n"
+                    " existing\n"
+                    "+ change\n"
+                ),
                 "test_case": "",
             }, None)
 

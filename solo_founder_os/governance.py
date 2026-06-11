@@ -49,16 +49,8 @@ GOVERNANCE_DIR = pathlib.Path.home() / ".solo-founder-os" / "governance"
 DECISIONS_LOG = GOVERNANCE_DIR / "decisions.jsonl"
 
 # Default agents to scan. Each agent's queue lives at
-# ~/.<agent>/queue/pending/. Add new agents here.
-DEFAULT_AGENT_DIRS = [
-    ".vc-outreach-agent",
-    ".bilingual-content-sync-agent",
-    ".orallexa-marketing-agent",
-    ".customer-discovery-agent",
-    ".build-quality-agent",
-    ".funnel-analytics-agent",
-    ".cost-audit-agent",
-]
+# ~/.<agent>/queue/pending/. Source of truth: solo_founder_os.agents_registry.
+from .agents_registry import KNOWN_AGENT_DIRS as DEFAULT_AGENT_DIRS  # noqa: E402,F401
 
 
 @dataclass

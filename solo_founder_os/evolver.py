@@ -96,6 +96,43 @@ def is_safe_path(path: str) -> bool:
     return False
 
 
+def extract_diff_targets(diff: str) -> list[str]:
+    """Pull every target path out of a unified diff's `+++ b/<path>` headers.
+
+    Why: previously synthesize_proposal validated the JSON `target_file`
+    field via is_safe_path, but `git apply` reads the path from the diff
+    body's headers. A Haiku reply could have `target_file=drafter.py`
+    (safe) and a diff that writes to `+++ b/.env` (not safe) — and the
+    .env write would land. This function gives the safety gate a way to
+    see what `git apply` will actually do.
+
+    Notes on diff semantics:
+      - `+++ /dev/null` means file deletion (the source side has the path).
+      - `--- /dev/null` means new file (no source). Combined with
+        `+++ b/<path>` it's a creation.
+      - We collect BOTH `---` and `+++` non-/dev/null paths so renames
+        and deletes are caught too.
+    """
+    targets: set[str] = set()
+    for raw in diff.splitlines():
+        line = raw.rstrip("\r")
+        for prefix in ("--- ", "+++ "):
+            if not line.startswith(prefix):
+                continue
+            path = line[len(prefix):].strip()
+            # Strip the conventional a/ b/ prefix git uses.
+            if path.startswith(("a/", "b/")):
+                path = path[2:]
+            if not path or path == "/dev/null":
+                continue
+            # git apply tolerates a leading "./" — normalize so the gate
+            # can't be bypassed with "./.env".
+            while path.startswith("./"):
+                path = path[2:]
+            targets.add(path)
+    return sorted(targets)
+
+
 @dataclass
 class FailurePattern:
     """A recurring (agent, task, signal-bucket) tuple that fired N≥3 times."""
@@ -404,9 +441,31 @@ def synthesize_proposal(
         return Proposal(pattern=pattern, target_file=target,
                           rationale=rationale, diff="", test_case=test_case)
 
-    # Safety gate: check target file is whitelisted, not blocked
+    # Safety gate: the JSON target_file must pass the allowlist...
     if not target or not is_safe_path(target):
         return None
+
+    # ...AND every path mentioned in the actual diff body must too,
+    # AND must match the declared target_file. Without this, a Haiku
+    # response could declare target_file=drafter.py (safe) and ship a
+    # diff that writes `+++ b/.env`. `git apply` would happily clobber
+    # .env because it reads paths from the diff headers, not the JSON.
+    diff_targets = extract_diff_targets(diff)
+    if not diff_targets:
+        # Diff has no parseable target headers — refuse rather than
+        # guess. A real unified diff always has them.
+        return None
+    for p in diff_targets:
+        if not is_safe_path(p):
+            return None
+    # All diff-side paths must match the declared target_file. We
+    # compare on suffix (Haiku may name "drafter.py" while the diff
+    # uses "solo_founder_os/drafter.py" — that's fine).
+    declared = target.lower()
+    for p in diff_targets:
+        pl = p.lower()
+        if pl != declared and not pl.endswith("/" + declared) and not declared.endswith("/" + pl):
+            return None
 
     return Proposal(pattern=pattern, target_file=target,
                       rationale=rationale, diff=diff, test_case=test_case)

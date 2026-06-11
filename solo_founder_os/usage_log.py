@@ -23,6 +23,17 @@ PRICES: dict[str, tuple[float, float]] = {
 }
 
 
+def estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Convert (model, tokens) into a dollar amount via the PRICES table.
+
+    Returns 0.0 for unknown models so the caller can still log the row
+    without dropping it. Anyone aggregating from logs should treat 0.0
+    as "missing or free" rather than "zero cost confirmed."
+    """
+    in_p, out_p = PRICES.get(model, (0.0, 0.0))
+    return (int(input_tokens) * in_p + int(output_tokens) * out_p) / 1_000_000
+
+
 def log_usage(
     *,
     log_path: pathlib.Path,
@@ -33,13 +44,21 @@ def log_usage(
     now: datetime | None = None,
 ) -> None:
     """Append one row. Best-effort — silently swallows I/O errors so a
-    failed log never breaks the calling agent."""
+    failed log never breaks the calling agent.
+
+    Writes `cost_usd` alongside the tokens so downstream readers
+    (morning_brief._cost_summary) don't have to keep the PRICES table
+    in sync themselves. Before this field existed, morning_brief read
+    `row.get('cost_usd', 0)` and always summed to $0.00 — the daily
+    cost section in the brief was permanently meaningless.
+    """
     now = now or datetime.now(timezone.utc)
     row = {
         "ts": now.isoformat(),
         "model": model,
         "input_tokens": int(input_tokens),
         "output_tokens": int(output_tokens),
+        "cost_usd": estimate_cost_usd(model, input_tokens, output_tokens),
     }
     if extra:
         row.update(extra)
