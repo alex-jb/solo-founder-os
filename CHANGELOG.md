@@ -3,6 +3,31 @@
 All notable changes to `solo-founder-os` from v0.10 onward. Each entry
 is one or two sentences; the commit messages are the source of truth.
 
+## v0.28.0 — 2026-06-11
+
+**New: `splunk_obs/` submodule** — Splunk HEC adapter for the Splunk
+Agentic Ops Hackathon. Ships `HECClient` (stdlib-only POST with retry
++ constant-time webhook verify), three pure-function translators
+(`sfos:reflection` / `sfos:eval` / `sfos:bandit`), and an `emit_loop`
+that tails each source with a per-source watermark. Includes a
+6-panel `dashboard.xml` ready for one-click Splunk Cloud import.
+
+**Bug fixes from Fable 5 self-audit:**
+
+- `evolver.py` now validates diff `+++` headers against the declared
+  `target_file`, not just the JSON field. Closes an injection path
+  where a Haiku reply could declare `target_file=drafter.py` while the
+  diff body wrote to `+++ b/.env`.
+- New `agents_registry.py` is the single source of truth for the
+  11-agent stack; `governance.py` and `supervisor.py` were each
+  hardcoding a 7-agent list that left customer-support, customer-outreach,
+  and payments blind to HITL inbox + supervisor proposals.
+- `usage_log.py` now writes `cost_usd` at log time; `morning_brief.py`'s
+  `_cost_summary` had been reading a field that was never written, so
+  the daily cost section was permanently $0.
+
+Tests: 513 → 536.
+
 ## v0.27.1 — 2026-05-04
 
 Docs: SFOS-specific CONTRIBUTING.md and SECURITY.md (replacing the
