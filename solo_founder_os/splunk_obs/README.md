@@ -6,6 +6,10 @@ Splunk adapter for [solo-founder-os](https://github.com/alex-jb/solo-founder-os)
 
 > LangSmith and Phoenix are designed for synchronous request-response agents. SFOS-obs is for the other shape: long-running cron-scheduled file-based agents that reflect on themselves and learn. This package emits the three streams that matter — agent outcomes, eval drift, bandit regret — into Splunk over HEC. 5-minute install. Zero new Python deps.
 
+> **"Almost everything can be made verifiable to some extent... the skill being built right now is judgment: what to delegate, how to specify it, how to review it fast."** — Andrej Karpathy on agentic engineering, June 2026.
+>
+> sfos-splunk-obs is the **verification surface** for that judgment. Reflections are the agent reviewing itself in plain text; eval drift is the auditor measuring whether the review predicted reality; bandit regret is the realized-vs-expected ledger of every promotion choice the marketing agent made. All three land in Splunk so a single dashboard answers "is this agent learning, or just running?"
+
 ---
 
 ## Three streams, three sourcetypes
