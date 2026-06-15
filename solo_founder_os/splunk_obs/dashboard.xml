@@ -48,10 +48,10 @@
       <chart>
         <search>
           <query>
-            sourcetype="sfos:eval" earliest=-30d
+            sourcetype="sfos:eval" earliest=-60d
             | timechart span=1d avg(score) as mean_score by skill
           </query>
-          <earliest>-30d@d</earliest>
+          <earliest>-60d@d</earliest>
           <latest>now</latest>
         </search>
         <option name="charting.chart">line</option>
@@ -67,13 +67,13 @@
       <table>
         <search>
           <query>
-            sourcetype="sfos:eval" earliest=-7d
-            | stats latest(p10) as p10, latest(score) as score,
+            sourcetype="sfos:eval" earliest=-60d
+            | stats max(p10) as p10, max(score) as score,
                     latest(n_samples) as n by skill
             | where score &lt; 2.5
             | sort score
           </query>
-          <earliest>-7d@d</earliest>
+          <earliest>-60d@d</earliest>
           <latest>now</latest>
         </search>
       </table>

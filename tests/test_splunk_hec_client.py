@@ -5,7 +5,6 @@ network. The goal is: verify the protocol shape (one JSON-per-line body,
 Splunk auth header) and the no-op-when-unconfigured behavior.
 """
 from __future__ import annotations
-import io
 import json
 from unittest.mock import patch, MagicMock
 
@@ -77,7 +76,8 @@ def test_hec_non_zero_code_raises():
 def test_webhook_signature_constant_time():
     secret = "shhh"
     body = b'{"alert":"eval_drift"}'
-    import hashlib, hmac
+    import hashlib
+    import hmac
     sig = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     assert verify_webhook_signature(secret, sig, body) is True
     assert verify_webhook_signature(secret, "sha256=deadbeef", body) is False

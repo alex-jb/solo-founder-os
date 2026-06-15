@@ -49,19 +49,28 @@ def translate_reflection(row: dict, *, agent_dir: str) -> tuple[dict, str, float
 def translate_eval(row: dict) -> tuple[dict, str, float]:
     """Daily eval row → HEC event.
 
-    Input shape (from `eval.py` persistence):
-      {skill, ts, n_examples, score_per_row, mean, p50, p10}
-
-    We emit mean + n_examples + the p10 (the bottom tail is where drift
-    bites). Drift-vs-baseline is computed in Splunk via timechart, not
-    here — keeps the translator dumb.
+    Accepts two schemas:
+      (legacy) {skill, ts, n_examples, mean, p50, p10}
+      (current) {skill, ts, n_examples, scores: [{overall: float, ...}, ...]}
     """
+    mean = row.get("mean")
+    p50 = row.get("p50")
+    p10 = row.get("p10")
+    if mean is None and isinstance(row.get("scores"), list):
+        overalls = sorted(
+            float(s.get("overall", 0.0)) for s in row["scores"]
+            if isinstance(s, dict) and s.get("overall") is not None
+        )
+        if overalls:
+            mean = sum(overalls) / len(overalls)
+            p50 = overalls[len(overalls) // 2]
+            p10 = overalls[max(0, int(len(overalls) * 0.1) - 1)] if len(overalls) >= 10 else overalls[0]
     event = {
         "skill": row.get("skill", ""),
-        "score": float(row.get("mean", 0.0)),
+        "score": float(mean or 0.0),
         "n_samples": int(row.get("n_examples", 0)),
-        "p50": float(row.get("p50", 0.0)),
-        "p10": float(row.get("p10", 0.0)),
+        "p50": float(p50 or 0.0),
+        "p10": float(p10 or 0.0),
     }
     return event, "sfos:eval", _parse_iso(row.get("ts", ""))
 

@@ -13,9 +13,7 @@ in a follow-up). For the hackathon demo, calling `emit_once()` from a
 loom recording is enough.
 """
 from __future__ import annotations
-import glob
 import json
-import os
 import pathlib
 import sqlite3
 from typing import Iterable

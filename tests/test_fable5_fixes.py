@@ -8,7 +8,6 @@ Bugs:
 """
 from __future__ import annotations
 import json
-from pathlib import Path
 
 from solo_founder_os.evolver import extract_diff_targets, is_safe_path
 from solo_founder_os import agents_registry
