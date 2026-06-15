@@ -2,7 +2,9 @@
 
 Splunk adapter for [solo-founder-os](https://github.com/alex-jb/solo-founder-os) — the 11-agent autonomous stack a single founder uses to run a company.
 
-**Submission for the Splunk Agentic Ops Hackathon 2026.**
+**Submission for the Splunk Agentic Ops Hackathon 2026** · Track: Observability · [Demo video (60s)](https://youtu.be/Z3HX77YLtZM) · [Devpost](https://splunk.devpost.com/) · [PyPI: solo-founder-os 0.28.0](https://pypi.org/project/solo-founder-os/0.28.0/)
+
+> **Built during the hackathon:** A schema mismatch between the v0.23 eval emitter and the v0.28 translator caused 14 events to land in Splunk at score 0.0 during the live demo. Caught it in the Panel 2b table within one minute. 5-line fix in `sfos_translator.py:49`. The exact silent-regression failure mode the system is designed to catch — caught itself, in the dashboard, during the hackathon.
 
 > LangSmith and Phoenix are designed for synchronous request-response agents. SFOS-obs is for the other shape: long-running cron-scheduled file-based agents that reflect on themselves and learn. This package emits the three streams that matter — agent outcomes, eval drift, bandit regret — into Splunk over HEC. 5-minute install. Zero new Python deps.
 
