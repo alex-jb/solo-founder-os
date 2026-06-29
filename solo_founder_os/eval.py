@@ -104,16 +104,40 @@ JUDGE_SCHEMA = {
 }
 
 
-def _judge_one(
+# Anthropic 2026-06-28 incident: the daily-brief distiller (alex-brain
+# 2d12937) and Shadow OCR live-smoke (shadow-mentor beb5602) both hit
+# the same wording change in Anthropic's monthly-quota error. SFOS eval
+# was silently failing for the same reason — 6/19 was the last success.
+# Same envelope-skip pattern, applied here.
+_ENVELOPE_PATTERNS = (
+    "credit balance",
+    "usage limit",
+    "api usage limits",
+    "insufficient_quota",
+    "rate_limit_error",
+    "reached your specified",
+)
+
+
+def _is_billing_envelope_error(err: str) -> bool:
+    """Distinguish 'we ran out of credits this month' (skip + report)
+    from 'the integration is broken' (surface loudly)."""
+    if not err:
+        return False
+    low = err.lower()
+    return any(p in low for p in _ENVELOPE_PATTERNS)
+
+
+def _judge_one_with_err(
     inputs: dict,
     output: str,
     *,
     rubric: str,
     client: AnthropicClient,
     model: str,
-) -> Optional[dict]:
-    """One Sonnet call: score one (inputs, output) pair against the rubric.
-    Returns the parsed dict or None on any failure."""
+) -> tuple[Optional[dict], Optional[str]]:
+    """Same as _judge_one but returns (obj, err) so callers can
+    distinguish envelope errors from other failures."""
     user = (
         f"Rubric:\n{rubric}\n\n"
         f"INPUTS used to produce the output:\n"
@@ -129,7 +153,22 @@ def _judge_one(
         messages=[{"role": "user", "content": user}],
     )
     if err is not None or obj is None:
-        return None
+        return None, err
+    return obj, None
+
+
+def _judge_one(
+    inputs: dict,
+    output: str,
+    *,
+    rubric: str,
+    client: AnthropicClient,
+    model: str,
+) -> Optional[dict]:
+    """Back-compat shim. Callers that don't need the error string keep
+    the original 2-arg None-or-dict return."""
+    obj, _ = _judge_one_with_err(inputs, output, rubric=rubric,
+                                  client=client, model=model)
     return obj
 
 
@@ -158,22 +197,27 @@ def evaluate_skill(
 
     examples = load_examples(skill_name, base=base, n=n)
     if not examples:
-        return None
+        return None  # SkipReason.NO_EXAMPLES
 
     if client is None:
         client = AnthropicClient(usage_log_path=EVAL_USAGE_LOG)
     if not client.configured:
-        return None
+        return None  # SkipReason.CLIENT_NOT_CONFIGURED
 
     scores: list[ExampleScore] = []
+    n_envelope_skipped = 0
+    last_envelope_msg = ""
     for i, ex in enumerate(examples):
         inputs = ex.get("inputs") or {}
         output = ex.get("output") or ""
         if not output:
             continue
-        judged = _judge_one(inputs, output, rubric=rubric,
-                              client=client, model=model)
+        judged, err = _judge_one_with_err(inputs, output, rubric=rubric,
+                                          client=client, model=model)
         if judged is None:
+            if err and _is_billing_envelope_error(err):
+                n_envelope_skipped += 1
+                last_envelope_msg = err[:200]
             continue
         clarity = _clamp(judged.get("clarity"))
         specificity = _clamp(judged.get("specificity"))
@@ -191,6 +235,15 @@ def evaluate_skill(
         ))
 
     if not scores:
+        if n_envelope_skipped > 0:
+            # Stash envelope context on the None return path so the CLI
+            # can surface "we hit your monthly quota" instead of the
+            # generic "Claude unavailable" message.
+            evaluate_skill._last_skip_reason = (  # type: ignore[attr-defined]
+                f"all {n_envelope_skipped} examples hit billing envelope: {last_envelope_msg}"
+            )
+        else:
+            evaluate_skill._last_skip_reason = "all judge calls failed (non-envelope)"  # type: ignore[attr-defined]
         return None
 
     overalls = sorted([s.overall for s in scores])
@@ -347,10 +400,25 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(f"Evaluating {len(skills)} skill(s) with sample size {args.n}",
           file=sys.stderr)
     for skill in skills:
+        # Reset per-skill skip reason before each call
+        try:
+            delattr(evaluate_skill, "_last_skip_reason")
+        except AttributeError:
+            pass
         report = evaluate_skill(skill, n=args.n)
         if report is None:
-            print(f"  {skill}: no examples or Claude unavailable",
-                  file=sys.stderr)
+            reason = getattr(evaluate_skill, "_last_skip_reason", None)
+            if reason and "envelope" in reason:
+                # Billing envelope hit — operator-actionable, not a regression
+                print(f"  ⏸ {skill}: SKIP envelope — {reason}",
+                      file=sys.stderr)
+            elif reason:
+                print(f"  ✗ {skill}: skip — {reason}", file=sys.stderr)
+            else:
+                # Backwards-compat: original message for the
+                # "no examples" / "client not configured" paths.
+                print(f"  {skill}: no examples or Claude unavailable",
+                      file=sys.stderr)
             continue
         path = write_report(report)
         print(f"  ✓ {skill}: mean {report.mean_overall} "
