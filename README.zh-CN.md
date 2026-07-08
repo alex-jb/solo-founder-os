@@ -44,6 +44,15 @@ Agent 工具空间已经很拥挤了 —— 说清楚 SFOS 在哪一层、不在
 
 ## 快速开始
 
+**不确定装哪个 agent?** 一天装 11 个太重。先按人群选一条 track:
+
+- **[独立开发者 (indie hacker)](docs/ONBOARDING-BY-AUDIENCE.md#track-1-indie-hacker)** — marketing + funnel + cost-audit + vc-outreach (4 个)
+- **[开源维护者 (OSS maintainer)](docs/ONBOARDING-BY-AUDIENCE.md#track-2-oss-maintainer)** — build-quality + marketing + bilingual-sync + customer-support (4 个)
+- **[自由开发者 (freelance dev)](docs/ONBOARDING-BY-AUDIENCE.md#track-3-freelance-dev)** — payments + customer-support + cost-audit + marketing (4 个)
+- **[研究团队 (research lab)](docs/ONBOARDING-BY-AUDIENCE.md#track-4-research-lab)** — customer-discovery + bilingual-sync + build-quality + marketing + funnel (5 个)
+
+或者只装 shared library 再跑 `sfos-doctor` 获得针对本机的推荐:
+
 ```bash
 pip install 'solo-founder-os[anthropic,ui]'
 

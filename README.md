@@ -86,6 +86,15 @@ If those constraints fit a one-person company shipping at a sustainable pace, re
 
 ## Quick start
 
+**Not sure which agents to install first?** All 11 agents on day one is overwhelming. Fork into an audience track first:
+
+- **[Indie hacker](docs/ONBOARDING-BY-AUDIENCE.md#track-1-indie-hacker)** — marketing + funnel + cost-audit + vc-outreach (4 agents)
+- **[OSS maintainer](docs/ONBOARDING-BY-AUDIENCE.md#track-2-oss-maintainer)** — build-quality + marketing + bilingual-sync + customer-support (4 agents)
+- **[Freelance dev](docs/ONBOARDING-BY-AUDIENCE.md#track-3-freelance-dev)** — payments + customer-support + cost-audit + marketing (4 agents)
+- **[Research lab](docs/ONBOARDING-BY-AUDIENCE.md#track-4-research-lab)** — customer-discovery + bilingual-sync + build-quality + marketing + funnel (5 agents)
+
+Or install the shared library and run `sfos-doctor` to get a per-agent recommendation:
+
 ```bash
 pip install 'solo-founder-os[anthropic,ui]'
 
